@@ -459,3 +459,18 @@ table.data td.acciones { white-space: nowrap; }
   font-family: inherit;
   background: #fff;
 }
+
+/* ---------- Importar programación MP ---------- */
+.dropzone {
+  border: 2px dashed var(--gris-borde);
+  border-radius: var(--radio);
+  padding: 34px 20px;
+  text-align: center;
+  color: var(--gris-texto);
+  cursor: pointer;
+  background: #fafcfd;
+  transition: border-color .12s, background .12s;
+}
+.dropzone:hover, .dropzone.hover { border-color: var(--azul); background: var(--azul-claro); color: var(--azul-osc); }
+.dropzone .big { font-size: 34px; margin-bottom: 8px; }
+.mp-status { margin-top: 12px; font-size: 13.5px; }

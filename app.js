@@ -165,6 +165,20 @@
         { key: 'tecnico', label: 'Técnico', tipo: 'tecnico', ancho: 24 },
         { key: 'observaciones', label: 'Observaciones', tipo: 'textarea', col: 'full', ancho: 40 }
       ]
+    },
+    {
+      id: 'mp', nombre: 'Mantención preventiva', icono: '🧰',
+      grupo: 'Mantención preventiva', via: 'Preventiva',
+      desc: 'Eventos de mantenimiento preventivo, importados desde la Programación MP (.xlsm) o creados manualmente.',
+      campos: [
+        { key: 'equipo', label: 'Equipo (listado crítico)', tipo: 'equipo', col: 'full' },
+        { key: 'fecha', label: 'Fecha', tipo: 'fecha', req: true, ancho: 14 },
+        { key: 'anio', label: 'Año', tipo: 'text', ancho: 8 },
+        { key: 'mes', label: 'Mes', tipo: 'select', opciones: ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'], ancho: 8 },
+        { key: 'tipo', label: 'Tipo', tipo: 'select', opciones: ['X', 'R', 'RA', 'PM'], ancho: 8, hint: 'X programada · R reprogramada · RA año anterior · PM puesta en marcha' },
+        { key: 'resultado', label: 'Resultado', tipo: 'select', opciones: ['Si', 'No', 'Baja', 'NU', 'Pendiente', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8'], ancho: 12 },
+        { key: 'observaciones', label: 'Observaciones', tipo: 'textarea', col: 'full', ancho: 40 }
+      ]
     }
   ];
 
@@ -178,6 +192,7 @@
     { label: 'Vía B · En sitio', items: ['diagnostico'] },
     { label: 'Subflujo comercial', items: ['cotizacion', 'gestion_oc', 'emision_oc'] },
     { label: 'Cierre del ciclo', items: ['reparacion', 'cierre'] },
+    { label: 'Mantención preventiva', items: ['__mp_import', 'mp'] },
     { label: 'Gestión', items: ['__todos', '__config'] }
   ];
 
@@ -186,6 +201,7 @@
   // ----------------------------------------------------------------- Estado/DB
   var DB = cargarDB();
   var STATE = { view: '__dashboard', editId: null, prefill: null };
+  var MP_STATE = { events: null, year: '' }; // último resultado del Generador de Eventos MP
 
   function cargarDB() {
     var db = null;
@@ -452,12 +468,18 @@
   // ------------------------------------------------------------------ Pills
   function pillFor(key, value) {
     if (!value) return document.createTextNode('');
+    var v = String(value);
     var cls = 'pill pill-gray';
-    if (key === 'via') cls = /Vía A/.test(value) ? 'pill pill-via-a' : 'pill pill-via-b';
-    else if (key === 'resultado' || key === 'estado_equipo' || key === 'estado_final') cls = /No operativo/i.test(value) ? 'pill pill-no' : 'pill pill-ok';
-    else if (key === 'estado') cls = /Sin soluci/i.test(value) ? 'pill pill-no' : (/Reparado/i.test(value) ? 'pill pill-ok' : 'pill pill-st');
+    if (key === 'via') cls = /Vía A/.test(v) ? 'pill pill-via-a' : 'pill pill-via-b';
+    else if (key === 'estado') cls = /Sin soluci/i.test(v) ? 'pill pill-no' : (/Reparado/i.test(v) ? 'pill pill-ok' : 'pill pill-st');
     else if (key === 'tipo_compra') cls = 'pill pill-via-a';
-    return el('span', { class: cls }, value);
+    else { // estado_equipo, estado_final, resultado (incl. resultados MP: Si/No/Baja/C1..C8/Pendiente/NU)
+      if (/^(operativo|si|reparado)$/i.test(v)) cls = 'pill pill-ok';
+      else if (/no operativo|^no$|^baja$|^c3$/i.test(v)) cls = 'pill pill-no';
+      else if (/servicio|^c2$/i.test(v)) cls = 'pill pill-st';
+      else cls = 'pill pill-gray'; // Pendiente, NU, C1, C4..C8
+    }
+    return el('span', { class: cls }, v);
   }
 
   // =========================================================== Render general
@@ -477,6 +499,7 @@
     renderSidebar();
     if (STATE.view === '__dashboard') renderDashboard();
     else if (STATE.view === '__inventario') renderInventario();
+    else if (STATE.view === '__mp_import') renderMPImport();
     else if (STATE.view === '__todos') renderTodos();
     else if (STATE.view === '__config') renderConfig();
     else renderEtapa(STATE.view);
@@ -492,6 +515,7 @@
         var label, icono, badge = null, badgeTitle = null;
         if (id === '__dashboard') { label = 'Resumen'; icono = '📊'; }
         else if (id === '__inventario') { label = 'Inventario de equipos'; icono = '🩺'; badge = Object.keys(buildEquipoIndex()).length; }
+        else if (id === '__mp_import') { label = 'Importar programación MP'; icono = '📥'; }
         else if (id === '__todos') { label = 'Todos los registros'; icono = '🗂️'; badge = totalRegistros(); }
         else if (id === '__config') { label = 'Configuración'; icono = '⚙️'; }
         else {
@@ -649,6 +673,7 @@
       case 'estado_st': return 'Servicio técnico';
       case 'envio': return 'Servicio técnico';
       case 'solicitud': return 'No operativo';
+      case 'mp': return (window.EventosMP && window.EventosMP.estadoFromResultado) ? window.EventosMP.estadoFromResultado(r.resultado) : null;
       default: return null; // etapas comerciales no definen estado físico
     }
   }
@@ -1420,6 +1445,157 @@
       XLSXWriter.descargar(etapa.nombre.replace(/[^\wáéíóúñ ]/gi, '').trim().replace(/\s+/g, '_') + '_' + hoyISO() + '.xlsx', [hojaEtapa(etapa)]);
       toast('Etapa exportada a Excel.', 'ok');
     } catch (e) { toast('Error al exportar: ' + e.message, 'err'); }
+  }
+
+  // ------------------------------------------------- Mantenciones Preventivas
+  function renderMPImport() {
+    setTitulo('📥 Importar programación MP', 'Mantenciones preventivas · genera eventos «una fila por evento»');
+    contentEl.innerHTML = '';
+
+    if (!window.XLSX || !window.EventosMP) {
+      contentEl.appendChild(el('div', { class: 'banner' }, 'No se pudo cargar el lector de Excel (vendor-xlsx.js / eventos_mp.js). Verifica que ambos archivos acompañen a la aplicación.'));
+      return;
+    }
+
+    var card = el('div', { class: 'card' });
+    card.appendChild(el('div', { class: 'card-head' }, [
+      el('h3', {}, 'Cargar Programación de Mantenciones Preventivas (.xlsm)'),
+      el('span', { class: 'desc' }, 'Se procesan las dos primeras hojas: Carta Gantt + Registro. Todo ocurre en tu navegador.')
+    ]));
+    var body = el('div', { class: 'card-body' });
+
+    var drop = el('div', { class: 'dropzone' }, [
+      el('div', { class: 'big' }, '📄'),
+      el('div', {}, 'Arrastra aquí tu archivo .xlsm / .xlsx, o haz clic para seleccionarlo')
+    ]);
+    var input = el('input', { type: 'file', accept: '.xlsm,.xlsx,.xls', style: 'display:none' });
+    drop.appendChild(input);
+    drop.onclick = function () { input.click(); };
+    input.onchange = function () { if (input.files[0]) procesarArchivoMP(input.files[0]); };
+    ['dragenter', 'dragover'].forEach(function (e) { drop.addEventListener(e, function (ev) { ev.preventDefault(); drop.classList.add('hover'); }); });
+    ['dragleave'].forEach(function (e) { drop.addEventListener(e, function (ev) { ev.preventDefault(); drop.classList.remove('hover'); }); });
+    drop.addEventListener('drop', function (ev) { ev.preventDefault(); drop.classList.remove('hover'); if (ev.dataTransfer.files[0]) procesarArchivoMP(ev.dataTransfer.files[0]); });
+    body.appendChild(drop);
+    body.appendChild(el('div', { class: 'mp-status', id: 'mp-status' }));
+    card.appendChild(body);
+    contentEl.appendChild(card);
+
+    contentEl.appendChild(el('div', { id: 'mp-result' }));
+
+    // Si ya se procesó un archivo en esta sesión, re-muestra el resultado.
+    if (MP_STATE.events) renderMPResultado(MP_STATE.stats, MP_STATE.events);
+  }
+
+  function procesarArchivoMP(file) {
+    var st = document.getElementById('mp-status');
+    st.innerHTML = '⏳ Leyendo «' + esc(file.name) + '»…';
+    var reader = new FileReader();
+    reader.onload = function (ev) {
+      setTimeout(function () {
+        try {
+          var data = new Uint8Array(ev.target.result);
+          var wb = window.XLSX.read(data, { type: 'array' });
+          var out = window.EventosMP.transform(wb);
+          MP_STATE.events = out.events; MP_STATE.year = out.stats.year; MP_STATE.stats = out.stats;
+          st.innerHTML = '✅ <strong>' + out.stats.total + '</strong> eventos generados desde «' + esc(file.name) + '».';
+          renderMPResultado(out.stats, out.events);
+        } catch (err) {
+          st.innerHTML = '❌ Error: ' + esc(err && err.message ? err.message : err) + ' — verifica que sea la Programación MP con al menos dos hojas (Gantt + Registro).';
+          document.getElementById('mp-result').innerHTML = '';
+        }
+      }, 20);
+    };
+    reader.onerror = function () { st.innerHTML = '❌ No se pudo leer el archivo.'; };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function mpStatBox(n, l) { return el('div', { class: 'stat' }, [el('div', { class: 'n' }, String(n)), el('div', { class: 'l' }, l)]); }
+
+  function renderMPResultado(stats, events) {
+    var cont = document.getElementById('mp-result'); if (!cont) return;
+    cont.innerHTML = '';
+    var card = el('div', { class: 'card' });
+    card.appendChild(el('div', { class: 'card-head' }, [
+      el('h3', {}, 'Resultado'),
+      el('span', { class: 'desc' }, (stats.year ? ('Año ' + stats.year + ' · ') : '') + stats.total + ' eventos · ' + stats.nGantt + ' equipos en el Gantt')
+    ]));
+    var body = el('div', { class: 'card-body' });
+
+    var actions = el('div', { class: 'form-actions' });
+    var bDl = el('button', { class: 'btn btn-success' }, '⬇️ Descargar Eventos_MP' + (stats.year ? ('_' + stats.year) : '') + '.xlsx');
+    bDl.onclick = function () { descargarEventosMP(events, stats.year); };
+    var bImp = el('button', { class: 'btn btn-primary' }, '➕ Importar al sistema (' + stats.total + ' registros)');
+    bImp.onclick = function () { importarEventosMP(events, stats.year); };
+    actions.appendChild(bDl); actions.appendChild(bImp);
+    body.appendChild(actions);
+
+    body.appendChild(el('h4', { style: 'margin:14px 0 6px;font-size:13.5px' }, 'Por tipo'));
+    var g1 = el('div', { class: 'stat-grid' });
+    ['X', 'R', 'RA', 'PM'].forEach(function (t) { if (stats.byTipo[t]) g1.appendChild(mpStatBox(stats.byTipo[t], 'Tipo ' + t)); });
+    body.appendChild(g1);
+
+    body.appendChild(el('h4', { style: 'margin:14px 0 6px;font-size:13.5px' }, 'Por resultado'));
+    var g2 = el('div', { class: 'stat-grid' });
+    Object.keys(stats.byRes).sort().forEach(function (r) { g2.appendChild(mpStatBox(stats.byRes[r], r)); });
+    body.appendChild(g2);
+
+    if (stats.bajaFuera && stats.bajaFuera.length) {
+      body.appendChild(el('div', { class: 'banner' }, 'Bajas que quedaron fuera (sin evento planificado en el Gantt): ' + stats.bajaFuera.length + '. Bajas incluidas: ' + stats.bajaIncluidas + '.'));
+    }
+
+    body.appendChild(el('h4', { style: 'margin:14px 0 6px;font-size:13.5px' }, 'Vista previa (primeras 20 filas)'));
+    var wrap = el('div', { class: 'tabla-wrap' });
+    var t = el('table', { class: 'data' });
+    t.appendChild(el('thead', {}, el('tr', {}, window.EventosMP.OUT_HEADERS.map(function (h) { return th(h); }))));
+    var tb = el('tbody');
+    events.slice(0, 20).forEach(function (row) {
+      tb.appendChild(el('tr', {}, row.map(function (v, ci) {
+        return (ci === 14 || ci === 15) ? td(v ? pillFor(ci === 15 ? 'resultado' : 'tipo', v) : '—') : td(v == null ? '' : String(v));
+      })));
+    });
+    t.appendChild(tb); wrap.appendChild(t); body.appendChild(wrap);
+
+    card.appendChild(body); cont.appendChild(card);
+  }
+
+  function descargarEventosMP(events, year) {
+    var E = window.EventosMP;
+    var nombre = year ? ('Eventos_MP_' + year) : 'Eventos_MP';
+    var hojaEv = { nombre: nombre, columnas: E.OUT_HEADERS.map(function (h, i) { return { titulo: h, ancho: E.OUT_WIDTHS[i] }; }), filas: events };
+    var hojaLeg = { nombre: 'Leyenda', columnas: [{ titulo: 'Código', ancho: 14 }, { titulo: 'Descripción', ancho: 90 }], filas: E.LEYENDA };
+    try { XLSXWriter.descargar(nombre + '.xlsx', [hojaEv, hojaLeg]); toast('Eventos MP exportados a Excel.', 'ok'); }
+    catch (e) { toast('Error al exportar: ' + e.message, 'err'); }
+  }
+
+  function mpFecha(anio, mes) {
+    var n = window.EventosMP.mesANumero(mes);
+    if (!anio || !n) return '';
+    return anio + '-' + String(n).padStart(2, '0') + '-01';
+  }
+  function mpKey(r) { return [r.equipo && r.equipo.inv, r.anio, r.mes, r.tipo].join('|'); }
+
+  function importarEventosMP(events, year) {
+    if (!events || !events.length) { toast('No hay eventos para importar.', 'err'); return; }
+    if (!confirm('Importar ' + events.length + ' eventos MP como registros de «Mantención preventiva».\n\nLos que ya existan (mismo equipo, año, mes y tipo) se actualizarán con el resultado más reciente. ¿Continuar?')) return;
+    var idx = {};
+    DB.registros.mp.forEach(function (r) { idx[mpKey(r)] = r; });
+    var nuevos = 0, actualizados = 0;
+    events.forEach(function (ev) {
+      var equipo = { inv: ev[2], nombre: ev[3], servicio: ev[4], unidad: ev[5], ubicacion: ev[6], marca: ev[8], modelo: ev[9], serie: ev[10] };
+      var mes = ev[13], tipo = ev[14], resultado = ev[15];
+      var anio = year ? String(year) : '';
+      var fecha = mpFecha(anio, mes);
+      var key = [equipo.inv, anio, mes, tipo].join('|');
+      var ex = idx[key];
+      if (ex) { ex.resultado = resultado; ex.fecha = fecha; ex.equipo = equipo; ex.anio = anio; ex._updatedAt = new Date().toISOString(); actualizados++; }
+      else {
+        var rec = { _id: uid(), _stage: 'mp', _createdAt: new Date().toISOString(), equipo: equipo, fecha: fecha, anio: anio, mes: mes, tipo: tipo, resultado: resultado, observaciones: '' };
+        DB.registros.mp.push(rec); idx[key] = rec; nuevos++;
+      }
+    });
+    guardarDB();
+    toast('Importación MP: ' + nuevos + ' nuevos, ' + actualizados + ' actualizados.', 'ok');
+    navegar('mp');
   }
 
   // ------------------------------------------------------------------- Init

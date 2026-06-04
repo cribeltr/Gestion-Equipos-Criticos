@@ -50,6 +50,14 @@ No requiere servidor, instalación ni conexión a internet: basta con abrir
     fecha y etapa.
   - Una hoja por cada etapa con sus campos, ordenadas por folio y fecha.
   - Encabezados resaltados, fila de título congelada y autofiltro.
+- **Mantenciones Preventivas (Generador de Eventos MP).** Sube la Programación
+  de Mantenciones Preventivas (`.xlsm`, hojas Carta Gantt + Registro) y la app
+  genera los eventos «una fila por evento»: puedes **descargar** el `.xlsx`
+  (hojas `Eventos_MP_<año>` + `Leyenda`) e **importarlos al sistema** como
+  registros de «Mantención preventiva», que alimentan el historial y el estado
+  del inventario (p. ej. `Si`→Operativo, `C2`→En servicio técnico, `C3`/`Baja`→No
+  operativo). Reimportar actualiza los eventos existentes (mismo equipo/año/mes/tipo).
+  Lectura del `.xlsm` con SheetJS embebido (100 % offline).
 - **Persistencia local** (`localStorage`) + respaldo/restauración en JSON.
 
 ## Etapas del proceso
@@ -66,6 +74,7 @@ No requiere servidor, instalación ni conexión a internet: basta con abrir
 | 8 | Emisión de orden de compra | Subflujo comercial · 8.3 |
 | 9 | Reparación del equipo | Común · 9 |
 | 10 | Cierre del ciclo | Cierre · 10 |
+| + | Mantención preventiva | Importada/manual (Generador de Eventos MP) |
 
 Las vías A y B son mutuamente excluyentes y el subflujo comercial es opcional;
 la aplicación no fuerza estas reglas, solo organiza el registro.
@@ -79,6 +88,8 @@ la aplicación no fuerza estas reglas, solo organiza el registro.
 | `app.js` | Lógica: formularios por etapa, persistencia y exportación. |
 | `xlsx.js` | Generador de archivos `.xlsx` (ZIP + Open XML) sin dependencias. |
 | `equipos.js` | Listado de equipos críticos (datos de referencia). |
+| `vendor-xlsx.js` | SheetJS (lectura de `.xlsm`/`.xlsx`) para el módulo MP. |
+| `eventos_mp.js` | Lógica del Generador de Eventos MP (Programación → eventos). |
 
 ## Notas técnicas
 
