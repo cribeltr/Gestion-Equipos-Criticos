@@ -37,11 +37,14 @@ No requiere servidor, instalación ni conexión a internet: basta con abrir
 - **Vínculo con el listado de equipos críticos** (965 equipos cargados como
   referencia): busque por inventario, equipo, serie, marca, servicio o ubicación.
 - **Inventario de equipos con estado automático.** Vista del inventario completo
-  donde el estado de cada equipo —**Operativo**, **No operativo**, **En servicio
-  técnico** o **Desconocido** (sin eventos)— se calcula a partir del **último
-  evento** registrado, junto con la **fecha de la última actualización**. Al
-  hacer clic en un equipo se abre su ficha con **todos sus registros**. Filtra
-  por estado y se puede exportar a `.xlsx`.
+  con todas las columnas del listado (ID, N° Carpeta, N° Inventario, Equipo,
+  Servicio, Unidad, Ubicación, Procedencia, Marca, Modelo, Serie) más el estado
+  de cada equipo —**Operativo**, **No operativo**, **En servicio técnico** o
+  **Desconocido** (sin eventos)—, calculado a partir del **último evento**
+  registrado, junto con la **fecha de la última actualización** y el N° de
+  registros. Al hacer clic en un equipo se abre su ficha con **todos sus
+  registros** y un botón para **crear un evento** (registro) en cualquier etapa
+  con el equipo ya precargado. Filtra por estado y se exporta a `.xlsx`.
 - **Exportación a `.xlsx` ordenada y tabulada**, sin librerías externas:
   - Hoja **«Bitácora general»** con todos los registros ordenados por folio,
     fecha y etapa.

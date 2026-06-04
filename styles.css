@@ -437,3 +437,25 @@ table.data td.acciones { white-space: nowrap; }
 }
 .ficha-grid .it .k { font-size: 10.5px; color: var(--gris-texto); text-transform: uppercase; letter-spacing: .03em; }
 .ficha-grid .it .v { font-weight: 600; font-size: 13.5px; }
+
+/* ---------- Crear evento desde la ficha del equipo ---------- */
+.crear-evento {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: var(--azul-claro);
+  border: 1px solid #cfe2ec;
+  border-radius: var(--radio);
+  padding: 10px 14px;
+  margin-bottom: 16px;
+}
+.crear-evento .k { font-weight: 600; color: var(--azul-osc); font-size: 13px; }
+.crear-evento select {
+  border: 1px solid var(--gris-borde);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  background: #fff;
+}

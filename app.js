@@ -185,7 +185,7 @@
 
   // ----------------------------------------------------------------- Estado/DB
   var DB = cargarDB();
-  var STATE = { view: '__dashboard', editId: null };
+  var STATE = { view: '__dashboard', editId: null, prefill: null };
 
   function cargarDB() {
     var db = null;
@@ -738,8 +738,9 @@
         if (ef && x.estado !== ef) return false;
         if (!q) return true;
         var e = x.e;
-        var hay = ((e.inventario || '') + ' ' + (e.equipo || '') + ' ' + (e.serie || '') + ' ' + (e.marca || '') + ' ' +
-          (e.modelo || '') + ' ' + (e.servicio || '') + ' ' + (e.unidad || '') + ' ' + (e.ubicacion || '')).toLowerCase();
+        var hay = ((e.id || '') + ' ' + (e.carpeta || '') + ' ' + (e.inventario || '') + ' ' + (e.equipo || '') + ' ' +
+          (e.serie || '') + ' ' + (e.marca || '') + ' ' + (e.modelo || '') + ' ' + (e.servicio || '') + ' ' +
+          (e.unidad || '') + ' ' + (e.ubicacion || '') + ' ' + (e.procedencia || '')).toLowerCase();
         return hay.indexOf(q) >= 0;
       });
       rows.sort(function (a, b) { return cmpNat(a.e.inventario, b.e.inventario); });
@@ -750,19 +751,25 @@
       var wrap = el('div', { class: 'tabla-wrap' });
       var t = el('table', { class: 'data' });
       t.appendChild(el('thead', {}, el('tr', {}, [
-        th('N° Inventario'), th('Equipo'), th('Servicio'), th('Ubicación'), th('Marca / Modelo'),
-        th('Serie'), th('Estado'), th('Última actualización'), th('Registros')
+        th('ID'), th('N° Carpeta'), th('N° Inventario'), th('Equipo'), th('Servicio'), th('Unidad'),
+        th('Ubicación'), th('Procedencia'), th('Marca'), th('Modelo'), th('Serie'),
+        th('Estado'), th('Última actualización'), th('Registros')
       ])));
       var tb = el('tbody');
       var frag = document.createDocumentFragment();
       rows.forEach(function (x) {
         var e = x.e;
         var tr = el('tr', { class: 'row-click' });
+        tr.appendChild(td(e.id || '—'));
+        tr.appendChild(td(e.carpeta || '—'));
         tr.appendChild(td(e.inventario || '—'));
         tr.appendChild(td(e.equipo || '—'));
         tr.appendChild(td(e.servicio || '—'));
+        tr.appendChild(td(e.unidad || '—'));
         tr.appendChild(td(e.ubicacion || '—'));
-        tr.appendChild(td([e.marca, e.modelo].filter(Boolean).join(' ') || '—'));
+        tr.appendChild(td(e.procedencia || '—'));
+        tr.appendChild(td(e.marca || '—'));
+        tr.appendChild(td(e.modelo || '—'));
         tr.appendChild(td(e.serie || '—'));
         tr.appendChild(td(estadoPill(x.estado)));
         tr.appendChild(td(x.ultima ? fmtFecha(x.ultima) : '—'));
@@ -792,6 +799,17 @@
       el('span', { class: 'count-note' }, item.ultima ? ('Última actualización: ' + fmtFecha(item.ultima)) : 'Sin actualizaciones'),
       el('span', { class: 'count-note' }, '· ' + item.n + ' registro(s)')
     ]));
+
+    // Crear un evento (registro) para este equipo, en la etapa elegida.
+    var crear = el('div', { class: 'crear-evento' });
+    var selEt = el('select');
+    ETAPAS.forEach(function (et) { selEt.appendChild(el('option', { value: et.id }, et.icono + ' ' + et.nombre)); });
+    var btnCrear = el('button', { class: 'btn btn-primary btn-sm' }, '➕ Crear evento');
+    btnCrear.onclick = function () { crearEventoDesdeEquipo(item.e, selEt.value); };
+    crear.appendChild(el('span', { class: 'k' }, 'Crear evento para este equipo:'));
+    crear.appendChild(selEt);
+    crear.appendChild(btnCrear);
+    cont.appendChild(crear);
 
     var fg = el('div', { class: 'ficha-grid' });
     [['N° Inventario', e.inventario], ['N° Carpeta', e.carpeta], ['Equipo', e.equipo], ['Servicio', e.servicio],
@@ -842,6 +860,31 @@
     openModal('🩺 ' + (e.inventario || '(sin inventario)') + ' — ' + (e.equipo || ''), cont);
   }
 
+  // Convierte un equipo del listado al formato que guarda el selector/registro.
+  function equipoToPicker(e) {
+    return { inv: e.inventario, nombre: e.equipo, servicio: e.servicio, serie: e.serie, marca: e.marca, modelo: e.modelo, unidad: e.unidad, ubicacion: e.ubicacion };
+  }
+
+  // Registro semilla con los valores por defecto de la etapa + datos precargados.
+  function seedRecord(etapa, overlay) {
+    var s = {};
+    etapa.campos.forEach(function (c) {
+      if (c.tipo === 'fecha') s[c.key] = hoyISO();
+      else if (c.tipo === 'select') s[c.key] = c.def || '';
+      else s[c.key] = '';
+    });
+    if (overlay) Object.keys(overlay).forEach(function (k) { s[k] = overlay[k]; });
+    return s;
+  }
+
+  // Abre el formulario de una etapa con el equipo ya seleccionado (nuevo registro).
+  function crearEventoDesdeEquipo(equipoRaw, etapaId) {
+    STATE.prefill = { etapaId: etapaId, overlay: { equipo: equipoToPicker(equipoRaw) } };
+    closeModal();
+    navegar(etapaId);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
   // ------------------------------------------------------------------- Modal
   function openModal(titulo, bodyNode) {
     closeModal();
@@ -870,15 +913,18 @@
     contentEl.innerHTML = '';
 
     var editando = STATE.editId ? DB.registros[id].filter(function (r) { return r._id === STATE.editId; })[0] : null;
+    // Semilla para nuevo registro (p. ej. al "Crear evento" desde un equipo).
+    var seed = (!editando && STATE.prefill && STATE.prefill.etapaId === id) ? seedRecord(etapa, STATE.prefill.overlay) : null;
+    STATE.prefill = null; // se consume una sola vez
 
     // --- Formulario
     var card = el('div', { class: 'card' });
     card.appendChild(el('div', { class: 'card-head' }, [
       el('h3', {}, (editando ? 'Editar registro' : 'Nuevo registro') + ' · ' + etapa.nombre),
-      el('span', { class: 'desc' }, etapa.desc)
+      el('span', { class: 'desc' }, seed ? ('Equipo precargado: ' + (seed.equipo.inv || '') + ' — ' + (seed.equipo.nombre || '')) : etapa.desc)
     ]));
     var body = el('div', { class: 'card-body' });
-    var form = buildForm(etapa, editando);
+    var form = buildForm(etapa, editando || seed);
     body.appendChild(form.grid);
 
     var actions = el('div', { class: 'form-actions' });
@@ -1306,8 +1352,9 @@
     var inv = calcInventario();
     inv.sort(function (a, b) { return cmpNat(a.e.inventario, b.e.inventario); });
     var cols = [
-      { titulo: 'N° Inventario', ancho: 14, get: function (x) { return x.e.inventario || ''; } },
+      { titulo: 'ID', ancho: 8, get: function (x) { return x.e.id || ''; } },
       { titulo: 'N° Carpeta', ancho: 12, get: function (x) { return x.e.carpeta || ''; } },
+      { titulo: 'N° Inventario', ancho: 14, get: function (x) { return x.e.inventario || ''; } },
       { titulo: 'Equipo', ancho: 20, get: function (x) { return x.e.equipo || ''; } },
       { titulo: 'Servicio', ancho: 22, get: function (x) { return x.e.servicio || ''; } },
       { titulo: 'Unidad', ancho: 18, get: function (x) { return x.e.unidad || ''; } },
