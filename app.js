@@ -812,7 +812,7 @@
     cont.appendChild(crear);
 
     var fg = el('div', { class: 'ficha-grid' });
-    [['N° Inventario', e.inventario], ['N° Carpeta', e.carpeta], ['Equipo', e.equipo], ['Servicio', e.servicio],
+    [['ID', e.id], ['N° Inventario', e.inventario], ['N° Carpeta', e.carpeta], ['Equipo', e.equipo], ['Servicio', e.servicio],
     ['Unidad', e.unidad], ['Ubicación', e.ubicacion], ['Procedencia', e.procedencia], ['Marca', e.marca],
     ['Modelo', e.modelo], ['Serie', e.serie], ['Año instalación', e.anio], ['Vida útil residual', e.vida_util],
     ['Clasificación', e.clasificacion]].forEach(function (p) {
@@ -877,9 +877,30 @@
     return s;
   }
 
+  // Último folio ABIERTO (no cerrado) asociado a un equipo, por su evento más reciente.
+  function ultimoFolioAbiertoEquipo(inv) {
+    if (!inv) return '';
+    var cerrados = foliosCerrados();
+    var evs = [];
+    ETAPAS.forEach(function (et) {
+      DB.registros[et.id].forEach(function (r) {
+        if (r.folio && r.equipo && r.equipo.inv === inv) evs.push(r);
+      });
+    });
+    evs.sort(cmpFechaDesc); // más reciente primero
+    for (var i = 0; i < evs.length; i++) { if (!cerrados[evs[i].folio]) return evs[i].folio; }
+    return '';
+  }
+
   // Abre el formulario de una etapa con el equipo ya seleccionado (nuevo registro).
   function crearEventoDesdeEquipo(equipoRaw, etapaId) {
-    STATE.prefill = { etapaId: etapaId, overlay: { equipo: equipoToPicker(equipoRaw) } };
+    var overlay = { equipo: equipoToPicker(equipoRaw) };
+    // Para etapas distintas de la solicitud, precarga el último folio abierto del equipo.
+    if (etapaId !== 'solicitud') {
+      var folio = ultimoFolioAbiertoEquipo(equipoRaw.inventario);
+      if (folio) overlay.folio = folio;
+    }
+    STATE.prefill = { etapaId: etapaId, overlay: overlay };
     closeModal();
     navegar(etapaId);
     window.scrollTo({ top: 0, behavior: 'smooth' });
