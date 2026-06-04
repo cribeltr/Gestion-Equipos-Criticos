@@ -743,7 +743,7 @@
           (e.unidad || '') + ' ' + (e.ubicacion || '') + ' ' + (e.procedencia || '')).toLowerCase();
         return hay.indexOf(q) >= 0;
       });
-      rows.sort(function (a, b) { return cmpNat(a.e.inventario, b.e.inventario); });
+      rows.sort(function (a, b) { return cmpNat(a.e.id, b.e.id) || cmpNat(a.e.inventario, b.e.inventario); });
       note.textContent = rows.length + ' equipo(s)';
       cont.innerHTML = '';
       if (!rows.length) { cont.appendChild(el('div', { class: 'empty-state' }, [el('div', { class: 'big' }, '🔎'), el('div', {}, 'Sin resultados.')])); return; }
@@ -1371,7 +1371,7 @@
 
   function hojaInventario() {
     var inv = calcInventario();
-    inv.sort(function (a, b) { return cmpNat(a.e.inventario, b.e.inventario); });
+    inv.sort(function (a, b) { return cmpNat(a.e.id, b.e.id) || cmpNat(a.e.inventario, b.e.inventario); });
     var cols = [
       { titulo: 'ID', ancho: 8, get: function (x) { return x.e.id || ''; } },
       { titulo: 'N° Carpeta', ancho: 12, get: function (x) { return x.e.carpeta || ''; } },
