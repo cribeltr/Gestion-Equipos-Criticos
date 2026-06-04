@@ -25,7 +25,13 @@ No requiere servidor, instalación ni conexión a internet: basta con abrir
   a seguir la secuencia: puede registrar una reparación o un cierre aunque no
   exista la solicitud previa.
 - **Folio manual.** El folio de la solicitud de trabajo se ingresa a mano. En
-  el resto de las etapas puede reutilizarlo desde una lista de folios ya usados.
+  el resto de las etapas puede reutilizarlo desde una lista de folios ya usados;
+  **al elegir un equipo, las sugerencias de folio se filtran automáticamente a
+  las solicitudes asociadas a ese equipo** (puede escribir cualquier folio igual).
+- **Contadores de "trabajo abierto".** Los números (badges) del menú izquierdo
+  cuentan solo el trabajo pendiente: **al cerrar un ciclo, los registros de ese
+  folio dejan de sumar** en los contadores de cada etapa, pero permanecen en las
+  tablas, en «Todos los registros» y en la exportación.
 - **Técnicos desde lista desplegable** en todas las etapas (administrables en
   Configuración). Lista inicial tomada del documento de proceso (v2.0).
 - **Vínculo con el listado de equipos críticos** (965 equipos cargados como

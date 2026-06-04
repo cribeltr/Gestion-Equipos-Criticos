@@ -272,7 +272,7 @@
   }
 
   // ------------------------------------------------------------- Selector eq.
-  function buildEquipoPicker(inicial) {
+  function buildEquipoPicker(inicial, onChange) {
     var wrap = el('div', { class: 'equipo-pick' });
     var input = el('input', { type: 'text', autocomplete: 'off', placeholder: 'Buscar por inventario, equipo, serie, marca, servicio…' });
     var results = el('div', { class: 'equipo-results' });
@@ -287,7 +287,7 @@
           (selected.ubicacion ? (' · ' + esc(selected.ubicacion)) : '') + '</span>';
         chip.classList.add('show');
         input.style.display = 'none';
-        chip.querySelector('.x').onclick = function () { selected = null; pintarChip(); };
+        chip.querySelector('.x').onclick = function () { selected = null; pintarChip(); if (onChange) onChange(selected); };
       } else {
         chip.classList.remove('show');
         input.style.display = '';
@@ -307,6 +307,7 @@
         it.onclick = function () {
           selected = { inv: m.inventario, nombre: m.equipo, servicio: m.servicio, serie: m.serie, marca: m.marca, modelo: m.modelo, unidad: m.unidad, ubicacion: m.ubicacion };
           input.value = ''; results.classList.remove('show'); pintarChip();
+          if (onChange) onChange(selected);
         };
         results.appendChild(it);
       });
@@ -324,6 +325,17 @@
     var grid = el('div', { class: 'form-grid' });
     var controls = {};
 
+    // Datalist de folios propio del formulario: se filtra al equipo elegido.
+    var folioDLId = 'dl-folios-' + uid();
+    var folioDL = el('datalist', { id: folioDLId });
+    var ctx = { equipoGet: null };
+    function actualizarFoliosForm() {
+      folioDL.innerHTML = '';
+      var sel = ctx.equipoGet ? ctx.equipoGet() : null;
+      var folios = (sel && sel.inv) ? foliosDeEquipo(sel.inv) : folioList();
+      folios.forEach(function (f) { folioDL.appendChild(el('option', { value: f })); });
+    }
+
     etapa.campos.forEach(function (campo) {
       var clazz = 'field' + (campo.col === 'full' ? ' col-full' : (campo.col === '2' ? ' col-2' : ''));
       var field = el('div', { class: clazz });
@@ -333,7 +345,8 @@
 
       var ctrl;
       if (campo.tipo === 'equipo') {
-        var picker = buildEquipoPicker(record ? record[campo.key] : null);
+        var picker = buildEquipoPicker(record ? record[campo.key] : null, function () { actualizarFoliosForm(); });
+        ctx.equipoGet = function () { return picker.get(); };
         field.appendChild(picker.wrap);
         controls[campo.key] = { get: function () { return picker.get(); } };
       } else if (campo.tipo === 'tecnico') {
@@ -360,7 +373,7 @@
         field.appendChild(ctrl);
         controls[campo.key] = { get: function () { return ctrl.value.trim(); } };
       } else if (campo.tipo === 'folio_ref') {
-        ctrl = el('input', { type: 'text', list: 'dl-folios', placeholder: 'Folio de la solicitud…' });
+        ctrl = el('input', { type: 'text', list: folioDLId, placeholder: 'Folio… (sugerencias según el equipo elegido)', autocomplete: 'off' });
         if (record && record[campo.key]) ctrl.value = record[campo.key];
         field.appendChild(ctrl);
         controls[campo.key] = { get: function () { return ctrl.value.trim(); } };
@@ -389,7 +402,20 @@
       grid.appendChild(field);
     });
 
+    grid.appendChild(folioDL);
+    actualizarFoliosForm(); // estado inicial (considera equipo ya seleccionado al editar)
     return { grid: grid, controls: controls };
+  }
+
+  // Folios asociados a un equipo (por N° de inventario), en cualquier etapa.
+  function foliosDeEquipo(inv) {
+    var s = {};
+    ETAPAS.forEach(function (et) {
+      DB.registros[et.id].forEach(function (r) {
+        if (r.folio && r.equipo && r.equipo.inv === inv) s[r.folio] = 1;
+      });
+    });
+    return Object.keys(s).sort(cmpNat);
   }
 
   function collectForm(etapa, controls) {
@@ -459,19 +485,24 @@
   function renderSidebar() {
     var nav = document.getElementById('nav');
     nav.innerHTML = '';
+    var cerrados = foliosCerrados();
     GRUPOS_NAV.forEach(function (g) {
       nav.appendChild(el('div', { class: 'group-label' }, g.label));
       g.items.forEach(function (id) {
-        var label, icono, badge = null;
+        var label, icono, badge = null, badgeTitle = null;
         if (id === '__dashboard') { label = 'Resumen'; icono = '📊'; }
         else if (id === '__inventario') { label = 'Inventario de equipos'; icono = '🩺'; badge = Object.keys(buildEquipoIndex()).length; }
         else if (id === '__todos') { label = 'Todos los registros'; icono = '🗂️'; badge = totalRegistros(); }
         else if (id === '__config') { label = 'Configuración'; icono = '⚙️'; }
-        else { var et = ETAPAS_BY_ID[id]; label = et.nombre; icono = et.icono; badge = DB.registros[id].length; }
+        else {
+          var et = ETAPAS_BY_ID[id]; label = et.nombre; icono = et.icono;
+          badge = conteoEtapaAbierta(id, cerrados); // solo trabajo abierto (excluye ciclos cerrados)
+          badgeTitle = 'Pendientes — excluye los ciclos ya cerrados';
+        }
         var a = el('a', { class: STATE.view === id ? 'active' : '' }, [
           el('span', { class: 'ico' }, icono),
           el('span', {}, label),
-          (badge != null && badge > 0) ? el('span', { class: 'badge' }, String(badge)) : null
+          (badge != null && badge > 0) ? el('span', { class: 'badge', title: badgeTitle }, String(badge)) : null
         ]);
         a.onclick = function () { navegar(id); };
         nav.appendChild(a);
@@ -483,6 +514,21 @@
 
   function totalRegistros() {
     var n = 0; ETAPAS.forEach(function (e) { n += DB.registros[e.id].length; }); return n;
+  }
+
+  // Folios cuyo ciclo está cerrado (tienen al menos un registro de "Cierre del ciclo").
+  function foliosCerrados() {
+    var s = {};
+    DB.registros.cierre.forEach(function (r) { if (r.folio) s[r.folio] = 1; });
+    return s;
+  }
+
+  // Conteo de "trabajo abierto" de una etapa: excluye registros de folios cerrados.
+  function conteoEtapaAbierta(stageId, cerrados) {
+    cerrados = cerrados || foliosCerrados();
+    var n = 0;
+    DB.registros[stageId].forEach(function (r) { if (!r.folio || !cerrados[r.folio]) n++; });
+    return n;
   }
 
   // ------------------------------------------------------------- Dashboard
@@ -854,6 +900,7 @@
         guardarDB();
         STATE.editId = null;
         renderEtapa(id);
+        renderSidebar(); // refresca los contadores de trabajo abierto
         window.scrollTo({ top: 0, behavior: 'smooth' });
       } catch (err) {
         toast(err.message, 'err');
@@ -954,7 +1001,7 @@
       bDel.onclick = function () {
         if (!confirm('¿Eliminar este registro de «' + etapa.nombre + '»? Esta acción no se puede deshacer.')) return;
         DB.registros[etapa.id] = DB.registros[etapa.id].filter(function (x) { return x._id !== r._id; });
-        guardarDB(); toast('Registro eliminado.'); renderEtapa(etapa.id);
+        guardarDB(); toast('Registro eliminado.'); renderEtapa(etapa.id); renderSidebar();
       };
       acc.appendChild(bEd); acc.appendChild(document.createTextNode(' ')); acc.appendChild(bDel);
       tr.appendChild(acc);
