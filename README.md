@@ -50,14 +50,26 @@ No requiere servidor, instalación ni conexión a internet: basta con abrir
     fecha y etapa.
   - Una hoja por cada etapa con sus campos, ordenadas por folio y fecha.
   - Encabezados resaltados, fila de título congelada y autofiltro.
-- **Mantenciones Preventivas (Generador de Eventos MP).** Sube la Programación
-  de Mantenciones Preventivas (`.xlsm`, hojas Carta Gantt + Registro) y la app
-  genera los eventos «una fila por evento»: puedes **descargar** el `.xlsx`
-  (hojas `Eventos_MP_<año>` + `Leyenda`) e **importarlos al sistema** como
-  registros de «Mantención preventiva», que alimentan el historial y el estado
-  del inventario (p. ej. `Si`→Operativo, `C2`→En servicio técnico, `C3`/`Baja`→No
-  operativo). Reimportar actualiza los eventos existentes (mismo equipo/año/mes/tipo).
+- **Mantenciones Preventivas (importación que actualiza el sistema).** Sube la
+  Programación de Mantenciones Preventivas (`.xlsm`, hojas Carta Gantt + Registro)
+  y, en vez de solo descargar, **actualiza los datos de los equipos del
+  inventario** con los del Gantt **e importa las mantenciones** como registros
+  (eventos «una fila por evento»). Reimportar actualiza lo existente (mismo
+  equipo/año/mes/tipo), no duplica. El estado del inventario se deriva del
+  resultado (`Si`→Operativo, `C2`→En servicio técnico, `C3`/`Baja`→No operativo).
+  Opcionalmente puedes **descargar** el `.xlsx` (`Eventos_MP_<año>` + `Leyenda`).
   Lectura del `.xlsm` con SheetJS embebido (100 % offline).
+- **Hub por equipo.** Desde el Inventario, al abrir un equipo puedes registrar
+  con un clic una **Mantención preventiva** (fecha + resultado Si/C1–C8/NU/Baja),
+  un **Evento correctivo** (etapas del flujo) o un **Pendiente**, con el equipo
+  ya precargado, y ver/gestionar todo su historial.
+- **Pendientes gestionables.** Asuntos pendientes por equipo con `tipo`
+  (Otro, Pauta de monitoreo, Firma, Reporte Interno, Reporte Externo) y ciclo de
+  estado (Pendiente → En proceso → Resuelto). Vista dedicada con filtros,
+  cambio de estado en línea y seguimiento.
+- **Tareas y actualizaciones en cada evento.** Todo evento (correctivo,
+  preventivo o pendiente) admite una lista de **tareas** (con avance) y una
+  **bitácora de actualizaciones** con fecha, desde un panel de gestión.
 - **Persistencia local** (`localStorage`) + respaldo/restauración en JSON.
 
 ## Etapas del proceso
@@ -74,7 +86,8 @@ No requiere servidor, instalación ni conexión a internet: basta con abrir
 | 8 | Emisión de orden de compra | Subflujo comercial · 8.3 |
 | 9 | Reparación del equipo | Común · 9 |
 | 10 | Cierre del ciclo | Cierre · 10 |
-| + | Mantención preventiva | Importada/manual (Generador de Eventos MP) |
+| + | Mantención preventiva | Importada/manual (Programación MP) |
+| + | Pendiente | Gestión de pendientes por equipo (con tareas y seguimiento) |
 
 Las vías A y B son mutuamente excluyentes y el subflujo comercial es opcional;
 la aplicación no fuerza estas reglas, solo organiza el registro.

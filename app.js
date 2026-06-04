@@ -179,6 +179,20 @@
         { key: 'resultado', label: 'Resultado', tipo: 'select', opciones: ['Si', 'No', 'Baja', 'NU', 'Pendiente', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8'], ancho: 12 },
         { key: 'observaciones', label: 'Observaciones', tipo: 'textarea', col: 'full', ancho: 40 }
       ]
+    },
+    {
+      id: 'pendiente', nombre: 'Pendiente', icono: '⚠️',
+      grupo: 'Gestión', via: 'Pendiente',
+      desc: 'Asunto pendiente asociado a un equipo, con seguimiento (estado, tareas y actualizaciones).',
+      campos: [
+        { key: 'equipo', label: 'Equipo (listado crítico)', tipo: 'equipo', col: 'full' },
+        { key: 'tipo', label: 'Tipo de pendiente', tipo: 'select', req: true, opciones: ['Otro', 'Pauta de monitoreo', 'Firma', 'Reporte Interno', 'Reporte Externo'], ancho: 20 },
+        { key: 'fecha', label: 'Fecha', tipo: 'fecha', req: true, ancho: 14 },
+        { key: 'estado_pendiente', label: 'Estado', tipo: 'select', opciones: ['Pendiente', 'En proceso', 'Resuelto'], def: 'Pendiente', ancho: 14 },
+        { key: 'tecnico', label: 'Responsable', tipo: 'tecnico', ancho: 24 },
+        { key: 'fecha_resolucion', label: 'Fecha de resolución', tipo: 'fecha', ancho: 16 },
+        { key: 'observaciones', label: 'Descripción', tipo: 'textarea', col: 'full', ancho: 44 }
+      ]
     }
   ];
 
@@ -193,15 +207,15 @@
     { label: 'Subflujo comercial', items: ['cotizacion', 'gestion_oc', 'emision_oc'] },
     { label: 'Cierre del ciclo', items: ['reparacion', 'cierre'] },
     { label: 'Mantención preventiva', items: ['__mp_import', 'mp'] },
-    { label: 'Gestión', items: ['__todos', '__config'] }
+    { label: 'Gestión', items: ['__pendientes', '__todos', '__config'] }
   ];
 
-  var EQUIPOS = window.EQUIPOS || [];
+  var EQUIPOS_BASE = window.EQUIPOS || [];
 
   // ----------------------------------------------------------------- Estado/DB
   var DB = cargarDB();
   var STATE = { view: '__dashboard', editId: null, prefill: null };
-  var MP_STATE = { events: null, year: '' }; // último resultado del Generador de Eventos MP
+  var MP_STATE = { events: null, year: '', equipos: null, stats: null }; // último .xlsm procesado
 
   function cargarDB() {
     var db = null;
@@ -209,12 +223,47 @@
     if (!db || typeof db !== 'object') db = {};
     if (!db.registros) db.registros = {};
     if (!db.config) db.config = {};
+    if (!db.equiposOverrides || typeof db.equiposOverrides !== 'object') db.equiposOverrides = {};
     if (!Array.isArray(db.config.tecnicos) || !db.config.tecnicos.length) db.config.tecnicos = TECNICOS_DEFAULT.slice();
     if (!Array.isArray(db.config.empresas)) db.config.empresas = EMPRESAS_DEFAULT.slice();
     ETAPAS.forEach(function (e) { if (!Array.isArray(db.registros[e.id])) db.registros[e.id] = []; });
     return db;
   }
   function guardarDB() { localStorage.setItem(STORAGE_KEY, JSON.stringify(DB)); }
+
+  // ---- Inventario mutable: lista base + overrides (editable / actualizable por .xlsm) ----
+  var _equiposCache = null;
+  function getEquipos() {
+    if (_equiposCache) return _equiposCache;
+    var ov = DB.equiposOverrides || {};
+    var byId = {}, orden = [];
+    EQUIPOS_BASE.forEach(function (e) { byId[e.id] = e; orden.push(e.id); });
+    Object.keys(ov).forEach(function (id) {
+      if (byId[id]) { var m = {}; for (var k in byId[id]) m[k] = byId[id][k]; for (var k2 in ov[id]) m[k2] = ov[id][k2]; byId[id] = m; }
+      else { byId[id] = ov[id]; orden.push(id); }
+    });
+    _equiposCache = orden.map(function (id) { return byId[id]; });
+    return _equiposCache;
+  }
+  function invalidarEquipos() { _equiposCache = null; }
+
+  // Actualiza/inserta equipos del inventario a partir de filas extraídas del .xlsm.
+  function actualizarEquipos(filas) {
+    var ov = DB.equiposOverrides = DB.equiposOverrides || {};
+    var baseById = {}; EQUIPOS_BASE.forEach(function (e) { baseById[e.id] = e; });
+    var nuevos = 0, actualizados = 0;
+    filas.forEach(function (f) {
+      var id = String(f.id == null ? '' : f.id).trim();
+      if (!id) return;
+      var prev = ov[id] || {};
+      var merged = {}; for (var k in prev) merged[k] = prev[k];
+      Object.keys(f).forEach(function (k) { if (f[k] !== '' && f[k] != null) merged[k] = f[k]; });
+      ov[id] = merged;
+      if (baseById[id]) actualizados++; else nuevos++;
+    });
+    invalidarEquipos();
+    return { nuevos: nuevos, actualizados: actualizados };
+  }
 
   // ------------------------------------------------------------------- Helpers
   function el(tag, attrs, children) {
@@ -266,8 +315,9 @@
   function buscarEquipos(q, limite) {
     var tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
     var out = [];
-    for (var i = 0; i < EQUIPOS.length; i++) {
-      var e = EQUIPOS[i];
+    var EQ = getEquipos();
+    for (var i = 0; i < EQ.length; i++) {
+      var e = EQ[i];
       var hay = ((e.inventario || '') + ' ' + (e.equipo || '') + ' ' + (e.serie || '') + ' ' +
         (e.marca || '') + ' ' + (e.modelo || '') + ' ' + (e.servicio || '') + ' ' +
         (e.unidad || '') + ' ' + (e.ubicacion || '')).toLowerCase();
@@ -472,6 +522,7 @@
     var cls = 'pill pill-gray';
     if (key === 'via') cls = /Vía A/.test(v) ? 'pill pill-via-a' : 'pill pill-via-b';
     else if (key === 'estado') cls = /Sin soluci/i.test(v) ? 'pill pill-no' : (/Reparado/i.test(v) ? 'pill pill-ok' : 'pill pill-st');
+    else if (key === 'estado_pendiente') cls = /Resuelto/i.test(v) ? 'pill pill-ok' : (/En proceso/i.test(v) ? 'pill pill-st' : 'pill pill-gray');
     else if (key === 'tipo_compra') cls = 'pill pill-via-a';
     else { // estado_equipo, estado_final, resultado (incl. resultados MP: Si/No/Baja/C1..C8/Pendiente/NU)
       if (/^(operativo|si|reparado)$/i.test(v)) cls = 'pill pill-ok';
@@ -500,6 +551,7 @@
     if (STATE.view === '__dashboard') renderDashboard();
     else if (STATE.view === '__inventario') renderInventario();
     else if (STATE.view === '__mp_import') renderMPImport();
+    else if (STATE.view === '__pendientes') renderPendientes();
     else if (STATE.view === '__todos') renderTodos();
     else if (STATE.view === '__config') renderConfig();
     else renderEtapa(STATE.view);
@@ -516,6 +568,7 @@
         if (id === '__dashboard') { label = 'Resumen'; icono = '📊'; }
         else if (id === '__inventario') { label = 'Inventario de equipos'; icono = '🩺'; badge = Object.keys(buildEquipoIndex()).length; }
         else if (id === '__mp_import') { label = 'Importar programación MP'; icono = '📥'; }
+        else if (id === '__pendientes') { label = 'Pendientes'; icono = '⚠️'; badge = pendientesAbiertos(); badgeTitle = 'Pendientes sin resolver'; }
         else if (id === '__todos') { label = 'Todos los registros'; icono = '🗂️'; badge = totalRegistros(); }
         else if (id === '__config') { label = 'Configuración'; icono = '⚙️'; }
         else {
@@ -585,6 +638,7 @@
     var body = el('div', { class: 'card-body' });
     var flow = el('div', { class: 'flow' });
     ETAPAS.forEach(function (et) {
+      if (et.id === 'mp' || et.id === 'pendiente') return; // tienen su propia sección
       var step = el('div', { class: 'step' }, [
         el('div', { class: 'tag' }, et.via),
         el('div', { class: 'name' }, et.icono + ' ' + et.nombre),
@@ -701,7 +755,7 @@
 
   function calcInventario() {
     var idx = buildEquipoIndex();
-    return EQUIPOS.map(function (e) {
+    return getEquipos().map(function (e) {
       var evs = (e.inventario && idx[e.inventario]) ? idx[e.inventario] : [];
       var info = estadoYActualizacion(evs);
       return { e: e, estado: info.estado, ultima: info.ultima, n: evs.length, evs: evs };
@@ -716,7 +770,7 @@
   }
 
   function renderInventario() {
-    setTitulo('🩺 Inventario de equipos', EQUIPOS.length + ' equipos críticos · estado según el último evento');
+    setTitulo('🩺 Inventario de equipos', getEquipos().length + ' equipos críticos · estado según el último evento');
     contentEl.innerHTML = '';
 
     var inv = calcInventario();
@@ -825,15 +879,25 @@
       el('span', { class: 'count-note' }, '· ' + item.n + ' registro(s)')
     ]));
 
-    // Crear un evento (registro) para este equipo, en la etapa elegida.
+    // Registrar para este equipo: accesos rápidos + evento correctivo por etapa.
     var crear = el('div', { class: 'crear-evento' });
+    crear.appendChild(el('span', { class: 'k' }, 'Registrar para este equipo:'));
+    var bMP = el('button', { class: 'btn btn-primary btn-sm' }, '🧰 Mantención preventiva');
+    bMP.onclick = function () { crearEventoDesdeEquipo(item.e, 'mp'); };
+    var bPend = el('button', { class: 'btn btn-sm' }, '⚠️ Pendiente');
+    bPend.onclick = function () { crearEventoDesdeEquipo(item.e, 'pendiente'); };
+    crear.appendChild(bMP);
+    crear.appendChild(bPend);
+    // Evento correctivo (elige la etapa del flujo correctivo)
     var selEt = el('select');
-    ETAPAS.forEach(function (et) { selEt.appendChild(el('option', { value: et.id }, et.icono + ' ' + et.nombre)); });
-    var btnCrear = el('button', { class: 'btn btn-primary btn-sm' }, '➕ Crear evento');
-    btnCrear.onclick = function () { crearEventoDesdeEquipo(item.e, selEt.value); };
-    crear.appendChild(el('span', { class: 'k' }, 'Crear evento para este equipo:'));
+    ETAPAS.forEach(function (et) {
+      if (et.id === 'mp' || et.id === 'pendiente') return;
+      selEt.appendChild(el('option', { value: et.id }, et.icono + ' ' + et.nombre));
+    });
+    var btnCorr = el('button', { class: 'btn btn-sm' }, '➕ Correctivo');
+    btnCorr.onclick = function () { crearEventoDesdeEquipo(item.e, selEt.value); };
     crear.appendChild(selEt);
-    crear.appendChild(btnCrear);
+    crear.appendChild(btnCorr);
     cont.appendChild(crear);
 
     var fg = el('div', { class: 'ficha-grid' });
@@ -872,8 +936,8 @@
         var obs = r.observaciones || '';
         tr.appendChild(td(obs.length > 50 ? (obs.slice(0, 50) + '…') : (obs || '—')));
         var acc = el('td', { class: 'acciones' });
-        var b = el('button', { class: 'btn btn-sm', title: 'Editar este registro' }, '✏️');
-        b.onclick = function () { closeModal(); navegar(x.etapa.id, r._id); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+        var b = el('button', { class: 'btn btn-sm', title: 'Gestionar (tareas y actualizaciones)' }, '🔧 Gestionar');
+        b.onclick = function () { openEventoDetalle(x.etapa.id, r._id); };
         acc.appendChild(b);
         tr.appendChild(acc);
         tb.appendChild(tr);
@@ -932,8 +996,10 @@
   }
 
   // ------------------------------------------------------------------- Modal
-  function openModal(titulo, bodyNode) {
+  var _modalOnClose = null;
+  function openModal(titulo, bodyNode, onClose) {
     closeModal();
+    _modalOnClose = onClose || null;
     var bd = el('div', { class: 'modal-backdrop', id: 'modal-bd' });
     var m = el('div', { class: 'modal' });
     var btnX = el('button', { class: 'close', title: 'Cerrar' }, '✕');
@@ -950,6 +1016,213 @@
     var x = document.getElementById('modal-bd');
     if (x && x.parentNode) x.parentNode.removeChild(x);
     document.removeEventListener('keydown', escClose);
+    var cb = _modalOnClose; _modalOnClose = null;
+    if (cb) cb();
+  }
+
+  // -------------------------------------------- Eventos: tareas y actualizaciones
+  function getRegistro(stageId, id) {
+    var arr = DB.registros[stageId] || [];
+    for (var i = 0; i < arr.length; i++) if (arr[i]._id === id) return arr[i];
+    return null;
+  }
+  function ensureSub(rec) {
+    if (!Array.isArray(rec.tareas)) rec.tareas = [];
+    if (!Array.isArray(rec.actualizaciones)) rec.actualizaciones = [];
+  }
+  function pendientesAbiertos() {
+    var n = 0; (DB.registros.pendiente || []).forEach(function (r) { if ((r.estado_pendiente || 'Pendiente') !== 'Resuelto') n++; });
+    return n;
+  }
+
+  // Panel de gestión de un evento: resumen + tareas + actualizaciones.
+  function openEventoDetalle(stageId, recId) {
+    var etapa = ETAPAS_BY_ID[stageId];
+    var rec = getRegistro(stageId, recId);
+    if (!etapa || !rec) { toast('No se encontró el registro.', 'err'); return; }
+    ensureSub(rec);
+    var cont = el('div');
+
+    var resumen = el('div', { class: 'evento-resumen' });
+    resumen.appendChild(el('span', { class: 'tag-etapa' }, etapa.nombre));
+    if (rec.equipo) resumen.appendChild(el('span', { class: 'count-note' }, equipoCorto(rec.equipo)));
+    if (rec.fecha) resumen.appendChild(el('span', { class: 'count-note' }, '📅 ' + fmtFecha(rec.fecha)));
+    if (rec.folio) resumen.appendChild(el('span', { class: 'count-note' }, 'Folio ' + rec.folio));
+    var er = estadoResultado(rec); if (er) resumen.appendChild(pillFor(estadoResultadoKey(rec), er));
+    cont.appendChild(resumen);
+
+    // Cambio rápido de estado para pendientes
+    if (stageId === 'pendiente') {
+      var fila = el('div', { class: 'crear-evento' });
+      fila.appendChild(el('span', { class: 'k' }, 'Estado:'));
+      var selE = el('select');
+      ['Pendiente', 'En proceso', 'Resuelto'].forEach(function (o) { selE.appendChild(el('option', { value: o }, o)); });
+      selE.value = rec.estado_pendiente || 'Pendiente';
+      selE.onchange = function () {
+        rec.estado_pendiente = selE.value;
+        if (selE.value === 'Resuelto' && !rec.fecha_resolucion) rec.fecha_resolucion = hoyISO();
+        rec._updatedAt = new Date().toISOString(); guardarDB(); renderSidebar();
+        toast('Estado: ' + selE.value, 'ok');
+      };
+      fila.appendChild(selE);
+      cont.appendChild(fila);
+    }
+
+    if (rec.observaciones) cont.appendChild(el('p', { class: 'evento-desc' }, rec.observaciones));
+
+    // --- Tareas ---
+    var hT = el('h4', { class: 'sub-h' }, '');
+    function refrescarTituloTareas() { hT.textContent = 'Tareas (' + rec.tareas.filter(function (t) { return t.hecha; }).length + '/' + rec.tareas.length + ')'; }
+    cont.appendChild(hT);
+    var listaT = el('div', { class: 'tareas' });
+    function pintarTareas() {
+      listaT.innerHTML = '';
+      if (!rec.tareas.length) listaT.appendChild(el('div', { class: 'muted-empty' }, 'Sin tareas.'));
+      rec.tareas.forEach(function (t) {
+        var row = el('div', { class: 'tarea' + (t.hecha ? ' done' : '') });
+        var cb = el('input', { type: 'checkbox' }); cb.checked = !!t.hecha;
+        cb.onchange = function () { t.hecha = cb.checked; t.doneAt = cb.checked ? new Date().toISOString() : null; rec._updatedAt = new Date().toISOString(); guardarDB(); pintarTareas(); refrescarTituloTareas(); };
+        var txt = el('span', { class: 't-txt' }, t.texto);
+        var del = el('button', { class: 'btn btn-sm btn-danger', title: 'Eliminar tarea' }, '🗑️');
+        del.onclick = function () { rec.tareas = rec.tareas.filter(function (x) { return x.id !== t.id; }); guardarDB(); pintarTareas(); refrescarTituloTareas(); };
+        row.appendChild(cb); row.appendChild(txt); row.appendChild(del);
+        listaT.appendChild(row);
+      });
+    }
+    pintarTareas(); refrescarTituloTareas();
+    cont.appendChild(listaT);
+    var addT = el('div', { class: 'inline-add' });
+    var inpT = el('input', { type: 'text', placeholder: 'Nueva tarea…' });
+    var btnT = el('button', { class: 'btn btn-primary' }, 'Agregar tarea');
+    function agregarTarea() { var v = inpT.value.trim(); if (!v) return; rec.tareas.push({ id: uid(), texto: v, hecha: false, createdAt: new Date().toISOString() }); inpT.value = ''; rec._updatedAt = new Date().toISOString(); guardarDB(); pintarTareas(); refrescarTituloTareas(); }
+    btnT.onclick = agregarTarea; inpT.addEventListener('keydown', function (e) { if (e.key === 'Enter') agregarTarea(); });
+    addT.appendChild(inpT); addT.appendChild(btnT); cont.appendChild(addT);
+
+    // --- Actualizaciones ---
+    cont.appendChild(el('h4', { class: 'sub-h' }, 'Actualizaciones'));
+    var listaA = el('div', { class: 'timeline' });
+    function pintarAct() {
+      listaA.innerHTML = '';
+      if (!rec.actualizaciones.length) listaA.appendChild(el('div', { class: 'muted-empty' }, 'Sin actualizaciones.'));
+      rec.actualizaciones.slice().sort(function (a, b) { return (b.createdAt || '').localeCompare(a.createdAt || ''); }).forEach(function (a) {
+        var it = el('div', { class: 'tl-item' });
+        it.appendChild(el('div', { class: 'tl-meta' }, fmtFechaHora(a.createdAt)));
+        it.appendChild(el('div', { class: 'tl-txt' }, a.texto));
+        listaA.appendChild(it);
+      });
+    }
+    pintarAct();
+    cont.appendChild(listaA);
+    var addA = el('div', { class: 'inline-add' });
+    var inpA = el('textarea', { rows: '2', placeholder: 'Escribe una actualización…' });
+    var btnA = el('button', { class: 'btn btn-primary' }, 'Agregar');
+    function agregarAct() { var v = inpA.value.trim(); if (!v) return; rec.actualizaciones.push({ id: uid(), texto: v, createdAt: new Date().toISOString() }); inpA.value = ''; rec._updatedAt = new Date().toISOString(); guardarDB(); pintarAct(); }
+    btnA.onclick = agregarAct;
+    addA.appendChild(inpA); addA.appendChild(btnA); cont.appendChild(addA);
+
+    var foot = el('div', { class: 'form-actions' });
+    var bEdit = el('button', { class: 'btn' }, '✏️ Editar campos del evento');
+    bEdit.onclick = function () { closeModal(); navegar(stageId, recId); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+    foot.appendChild(bEdit);
+    cont.appendChild(foot);
+
+    openModal((etapa.icono || '') + ' ' + etapa.nombre + (rec.equipo ? (' · ' + (rec.equipo.inv || '')) : ''), cont, function () { render(); });
+  }
+
+  // -------------------------------------------------------------- Pendientes
+  function renderPendientes() {
+    setTitulo('⚠️ Pendientes', 'Gestión y seguimiento de asuntos pendientes por equipo');
+    contentEl.innerHTML = '';
+    var etapa = ETAPAS_BY_ID['pendiente'];
+    var lista = DB.registros.pendiente.slice();
+
+    var counts = { 'Pendiente': 0, 'En proceso': 0, 'Resuelto': 0 };
+    lista.forEach(function (r) { var s = r.estado_pendiente || 'Pendiente'; counts[s] = (counts[s] || 0) + 1; });
+    var stats = el('div', { class: 'stat-grid' });
+    stats.appendChild(mpStatBox(counts['Pendiente'], 'Pendientes'));
+    stats.appendChild(mpStatBox(counts['En proceso'], 'En proceso'));
+    stats.appendChild(el('div', { class: 'stat accent' }, [el('div', { class: 'n' }, String(counts['Resuelto'])), el('div', { class: 'l' }, 'Resueltos')]));
+    contentEl.appendChild(stats);
+
+    // Crear pendiente
+    var card = el('div', { class: 'card' });
+    card.appendChild(el('div', { class: 'card-head' }, [el('h3', {}, 'Nuevo pendiente'), el('span', { class: 'desc' }, etapa.desc)]));
+    var body = el('div', { class: 'card-body' });
+    var form = buildForm(etapa, null);
+    body.appendChild(form.grid);
+    var actions = el('div', { class: 'form-actions' });
+    var bg = el('button', { class: 'btn btn-primary' }, '➕ Guardar pendiente');
+    bg.onclick = function () {
+      try {
+        var rec = collectForm(etapa, form.controls);
+        rec._id = uid(); rec._stage = 'pendiente'; rec._createdAt = new Date().toISOString(); rec.tareas = []; rec.actualizaciones = [];
+        autoaprenderEmpresa(rec); DB.registros.pendiente.push(rec); guardarDB();
+        toast('Pendiente registrado.', 'ok'); renderPendientes(); renderSidebar(); window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (err) { toast(err.message, 'err'); }
+    };
+    actions.appendChild(bg); body.appendChild(actions); card.appendChild(body); contentEl.appendChild(card);
+
+    // Listado gestionable
+    var card2 = el('div', { class: 'card' });
+    card2.appendChild(el('div', { class: 'card-head' }, [el('h3', {}, 'Listado de pendientes')]));
+    var body2 = el('div', { class: 'card-body' });
+    var toolbar = el('div', { class: 'toolbar' });
+    var search = el('input', { type: 'search', placeholder: 'Buscar por equipo, tipo, descripción, responsable…' });
+    var selE = el('select');
+    [['', 'Todos los estados'], ['Pendiente', 'Pendiente'], ['En proceso', 'En proceso'], ['Resuelto', 'Resuelto']].forEach(function (o) { selE.appendChild(el('option', { value: o[0] }, o[1])); });
+    var selT = el('select'); selT.appendChild(el('option', { value: '' }, 'Todos los tipos'));
+    ['Otro', 'Pauta de monitoreo', 'Firma', 'Reporte Interno', 'Reporte Externo'].forEach(function (o) { selT.appendChild(el('option', { value: o }, o)); });
+    toolbar.appendChild(search); toolbar.appendChild(selE); toolbar.appendChild(selT);
+    toolbar.appendChild(el('div', { class: 'spacer' }));
+    var bExp = el('button', { class: 'btn' }, '⬇️ Exportar'); bExp.onclick = function () { exportarEtapa(etapa); };
+    toolbar.appendChild(bExp); body2.appendChild(toolbar);
+    var cont = el('div'); body2.appendChild(cont);
+
+    function pintar() {
+      var q = search.value.trim().toLowerCase(), fe = selE.value, ft = selT.value;
+      var rows = lista.filter(function (r) {
+        if (fe && (r.estado_pendiente || 'Pendiente') !== fe) return false;
+        if (ft && r.tipo !== ft) return false;
+        if (!q) return true;
+        return ((equipoCorto(r.equipo) + ' ' + (r.tipo || '') + ' ' + (r.observaciones || '') + ' ' + (r.tecnico || '')).toLowerCase().indexOf(q) >= 0);
+      });
+      rows.sort(function (a, b) {
+        var ra = (a.estado_pendiente === 'Resuelto') ? 1 : 0, rb = (b.estado_pendiente === 'Resuelto') ? 1 : 0;
+        return ra - rb || cmpFechaDesc(a, b);
+      });
+      cont.innerHTML = '';
+      if (!rows.length) { cont.appendChild(el('div', { class: 'empty-state' }, [el('div', { class: 'big' }, '✅'), el('div', {}, 'Sin pendientes que coincidan.')])); return; }
+      var wrap = el('div', { class: 'tabla-wrap' });
+      var t = el('table', { class: 'data' });
+      t.appendChild(el('thead', {}, el('tr', {}, [th('Equipo'), th('Tipo'), th('Descripción'), th('Estado'), th('Responsable'), th('Fecha'), th('Tareas'), th('Acciones')])));
+      var tb = el('tbody');
+      rows.forEach(function (r) {
+        ensureSub(r);
+        var tr = el('tr');
+        tr.appendChild(td(equipoCorto(r.equipo) || '—'));
+        tr.appendChild(td(r.tipo || '—'));
+        var obs = r.observaciones || ''; tr.appendChild(td(obs.length > 48 ? (obs.slice(0, 48) + '…') : (obs || '—')));
+        var tdE = el('td'); var sel = el('select', { class: 'mini' });
+        ['Pendiente', 'En proceso', 'Resuelto'].forEach(function (o) { sel.appendChild(el('option', { value: o }, o)); });
+        sel.value = r.estado_pendiente || 'Pendiente';
+        sel.onchange = function () { r.estado_pendiente = sel.value; if (sel.value === 'Resuelto' && !r.fecha_resolucion) r.fecha_resolucion = hoyISO(); r._updatedAt = new Date().toISOString(); guardarDB(); renderSidebar(); renderPendientes(); };
+        tdE.appendChild(sel); tr.appendChild(tdE);
+        tr.appendChild(td(r.tecnico || '—'));
+        tr.appendChild(td(fmtFecha(r.fecha) || '—'));
+        var done = r.tareas.filter(function (x) { return x.hecha; }).length;
+        tr.appendChild(td(r.tareas.length ? (done + '/' + r.tareas.length) : '—'));
+        var acc = el('td', { class: 'acciones' });
+        var bG = el('button', { class: 'btn btn-sm' }, '🔧 Gestionar'); bG.onclick = function () { openEventoDetalle('pendiente', r._id); };
+        var bD = el('button', { class: 'btn btn-sm btn-danger' }, '🗑️'); bD.onclick = function () { if (!confirm('¿Eliminar este pendiente?')) return; DB.registros.pendiente = DB.registros.pendiente.filter(function (x) { return x._id !== r._id; }); guardarDB(); renderSidebar(); renderPendientes(); };
+        acc.appendChild(bG); acc.appendChild(document.createTextNode(' ')); acc.appendChild(bD);
+        tr.appendChild(acc);
+        tb.appendChild(tr);
+      });
+      t.appendChild(tb); wrap.appendChild(t); cont.appendChild(wrap);
+    }
+    search.addEventListener('input', pintar); selE.addEventListener('change', pintar); selT.addEventListener('change', pintar);
+    pintar();
+    card2.appendChild(body2); contentEl.appendChild(card2);
   }
 
   // --------------------------------------------------------------- Etapa view
@@ -1087,6 +1360,8 @@
         tr.appendChild(td(obs.length > 60 ? (obs.slice(0, 60) + '…') : (obs || '—')));
       }
       var acc = el('td', { class: 'acciones' });
+      var bGes = el('button', { class: 'btn btn-sm', title: 'Gestionar (tareas y actualizaciones)' }, '🔧');
+      bGes.onclick = function () { openEventoDetalle(etapa.id, r._id); };
       var bEd = el('button', { class: 'btn btn-sm' }, '✏️ Editar');
       bEd.onclick = function () { STATE.editId = r._id; renderEtapa(etapa.id); window.scrollTo({ top: 0, behavior: 'smooth' }); };
       var bDel = el('button', { class: 'btn btn-sm btn-danger' }, '🗑️');
@@ -1095,7 +1370,7 @@
         DB.registros[etapa.id] = DB.registros[etapa.id].filter(function (x) { return x._id !== r._id; });
         guardarDB(); toast('Registro eliminado.'); renderEtapa(etapa.id); renderSidebar();
       };
-      acc.appendChild(bEd); acc.appendChild(document.createTextNode(' ')); acc.appendChild(bDel);
+      acc.appendChild(bGes); acc.appendChild(document.createTextNode(' ')); acc.appendChild(bEd); acc.appendChild(document.createTextNode(' ')); acc.appendChild(bDel);
       tr.appendChild(acc);
       tb.appendChild(tr);
     });
@@ -1163,9 +1438,11 @@
         tr.appendChild(td(r.empresa || '—'));
         tr.appendChild(td(numeroDoc(r) || '—'));
         var acc = el('td', { class: 'acciones' });
-        var bEd = el('button', { class: 'btn btn-sm' }, '✏️');
+        var bGes = el('button', { class: 'btn btn-sm', title: 'Gestionar' }, '🔧');
+        bGes.onclick = function () { openEventoDetalle(x.et.id, r._id); };
+        var bEd = el('button', { class: 'btn btn-sm', title: 'Editar' }, '✏️');
         bEd.onclick = function () { navegar(x.et.id, r._id); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-        acc.appendChild(bEd);
+        acc.appendChild(bGes); acc.appendChild(document.createTextNode(' ')); acc.appendChild(bEd);
         tr.appendChild(acc);
         tb.appendChild(tr);
       });
@@ -1199,8 +1476,9 @@
     });
     return rows;
   }
-  function estadoResultado(r) { return r.estado || r.estado_equipo || r.resultado || r.estado_final || r.via || ''; }
+  function estadoResultado(r) { return r.estado_pendiente || r.estado || r.estado_equipo || r.resultado || r.estado_final || r.via || ''; }
   function estadoResultadoKey(r) {
+    if (r.estado_pendiente) return 'estado_pendiente';
     if (r.estado) return 'estado'; if (r.estado_equipo) return 'estado_equipo'; if (r.resultado) return 'resultado';
     if (r.estado_final) return 'estado_final'; if (r.via) return 'via'; return '';
   }
@@ -1271,7 +1549,7 @@
 
     // Datos
     var card3 = el('div', { class: 'card' });
-    card3.appendChild(el('div', { class: 'card-head' }, [el('h3', {}, '💾 Datos y respaldo'), el('span', { class: 'desc' }, EQUIPOS.length + ' equipos críticos cargados como referencia.')]));
+    card3.appendChild(el('div', { class: 'card-head' }, [el('h3', {}, '💾 Datos y respaldo'), el('span', { class: 'desc' }, getEquipos().length + ' equipos críticos en el inventario.')]));
     var body3 = el('div', { class: 'card-body' });
     body3.appendChild(el('div', { class: 'hint' }, 'Los registros se guardan localmente en este navegador (localStorage). Use el respaldo para trasladarlos a otro equipo.'));
     var actions = el('div', { class: 'form-actions' });
@@ -1497,7 +1775,8 @@
           var wb = window.XLSX.read(data, { type: 'array' });
           var out = window.EventosMP.transform(wb);
           MP_STATE.events = out.events; MP_STATE.year = out.stats.year; MP_STATE.stats = out.stats;
-          st.innerHTML = '✅ <strong>' + out.stats.total + '</strong> eventos generados desde «' + esc(file.name) + '».';
+          MP_STATE.equipos = window.EventosMP.extractEquipos(wb);
+          st.innerHTML = '✅ <strong>' + out.stats.total + '</strong> eventos generados desde «' + esc(file.name) + '» (' + MP_STATE.equipos.length + ' equipos en el Gantt).';
           renderMPResultado(out.stats, out.events);
         } catch (err) {
           st.innerHTML = '❌ Error: ' + esc(err && err.message ? err.message : err) + ' — verifica que sea la Programación MP con al menos dos hojas (Gantt + Registro).';
@@ -1522,12 +1801,13 @@
     var body = el('div', { class: 'card-body' });
 
     var actions = el('div', { class: 'form-actions' });
-    var bDl = el('button', { class: 'btn btn-success' }, '⬇️ Descargar Eventos_MP' + (stats.year ? ('_' + stats.year) : '') + '.xlsx');
+    var bImp = el('button', { class: 'btn btn-primary' }, '🔄 Actualizar inventario e importar mantenciones');
+    bImp.onclick = function () { actualizarEImportarMP(); };
+    var bDl = el('button', { class: 'btn' }, '⬇️ Descargar Eventos_MP' + (stats.year ? ('_' + stats.year) : '') + '.xlsx');
     bDl.onclick = function () { descargarEventosMP(events, stats.year); };
-    var bImp = el('button', { class: 'btn btn-primary' }, '➕ Importar al sistema (' + stats.total + ' registros)');
-    bImp.onclick = function () { importarEventosMP(events, stats.year); };
-    actions.appendChild(bDl); actions.appendChild(bImp);
+    actions.appendChild(bImp); actions.appendChild(bDl);
     body.appendChild(actions);
+    body.appendChild(el('div', { class: 'hint' }, 'Al actualizar, se refrescan los datos de los equipos del inventario con los del Gantt y se registran las mantenciones preventivas (los eventos existentes del mismo equipo/año/mes/tipo se actualizan, no se duplican).'));
 
     body.appendChild(el('h4', { style: 'margin:14px 0 6px;font-size:13.5px' }, 'Por tipo'));
     var g1 = el('div', { class: 'stat-grid' });
@@ -1574,13 +1854,12 @@
   }
   function mpKey(r) { return [r.equipo && r.equipo.inv, r.anio, r.mes, r.tipo].join('|'); }
 
+  // Importa eventos como registros MP (sin guardar/navegar); devuelve conteos.
   function importarEventosMP(events, year) {
-    if (!events || !events.length) { toast('No hay eventos para importar.', 'err'); return; }
-    if (!confirm('Importar ' + events.length + ' eventos MP como registros de «Mantención preventiva».\n\nLos que ya existan (mismo equipo, año, mes y tipo) se actualizarán con el resultado más reciente. ¿Continuar?')) return;
     var idx = {};
     DB.registros.mp.forEach(function (r) { idx[mpKey(r)] = r; });
     var nuevos = 0, actualizados = 0;
-    events.forEach(function (ev) {
+    (events || []).forEach(function (ev) {
       var equipo = { inv: ev[2], nombre: ev[3], servicio: ev[4], unidad: ev[5], ubicacion: ev[6], marca: ev[8], modelo: ev[9], serie: ev[10] };
       var mes = ev[13], tipo = ev[14], resultado = ev[15];
       var anio = year ? String(year) : '';
@@ -1589,13 +1868,22 @@
       var ex = idx[key];
       if (ex) { ex.resultado = resultado; ex.fecha = fecha; ex.equipo = equipo; ex.anio = anio; ex._updatedAt = new Date().toISOString(); actualizados++; }
       else {
-        var rec = { _id: uid(), _stage: 'mp', _createdAt: new Date().toISOString(), equipo: equipo, fecha: fecha, anio: anio, mes: mes, tipo: tipo, resultado: resultado, observaciones: '' };
+        var rec = { _id: uid(), _stage: 'mp', _createdAt: new Date().toISOString(), equipo: equipo, fecha: fecha, anio: anio, mes: mes, tipo: tipo, resultado: resultado, observaciones: '', tareas: [], actualizaciones: [] };
         DB.registros.mp.push(rec); idx[key] = rec; nuevos++;
       }
     });
+    return { nuevos: nuevos, actualizados: actualizados };
+  }
+
+  // Acción principal del módulo MP: actualiza el inventario + importa las mantenciones.
+  function actualizarEImportarMP() {
+    if (!MP_STATE.events) { toast('Primero carga un archivo .xlsm.', 'err'); return; }
+    if (!confirm('Esto actualizará los datos de los equipos del inventario con los del Gantt y registrará las mantenciones preventivas (actualiza, no duplica). ¿Continuar?')) return;
+    var resEq = actualizarEquipos(MP_STATE.equipos || []);
+    var resEv = importarEventosMP(MP_STATE.events, MP_STATE.year);
     guardarDB();
-    toast('Importación MP: ' + nuevos + ' nuevos, ' + actualizados + ' actualizados.', 'ok');
-    navegar('mp');
+    toast('Inventario: ' + resEq.actualizados + ' actualizados, ' + resEq.nuevos + ' nuevos · Mantenciones: ' + resEv.nuevos + ' nuevas, ' + resEv.actualizados + ' actualizadas.', 'ok');
+    navegar('__inventario');
   }
 
   // ------------------------------------------------------------------- Init

@@ -197,6 +197,27 @@
     };
   }
 
+  // ---- Extrae los datos de TODOS los equipos del Gantt (para actualizar el inventario) ----
+  var EQUIP_KEYS = ['id', 'carpeta', 'inventario', 'equipo', 'servicio', 'unidad', 'ubicacion', 'procedencia', 'marca', 'modelo', 'serie', 'anio', 'vida_util'];
+  function extractEquipos(wb) {
+    if (!wb || !wb.SheetNames || !wb.SheetNames.length) return [];
+    var gantt = wb.Sheets[wb.SheetNames[0]];
+    var gRows = equipmentRows(gantt, findHeaderRow(gantt));
+    var out = [];
+    gRows.forEach(function (gr) {
+      var rec = {};
+      for (var ci = 0; ci < EQUIP_COLS.length; ci++) {
+        var col = EQUIP_COLS[ci], raw = getCell(gantt, gr, col), val;
+        if (col === COL_INV) val = invText(raw);
+        else if (col === 1 || col === 2 || col === 12 || col === 13) { var n = asIntOrText(raw); val = (n == null ? '' : String(n)); }
+        else val = plain(raw);
+        rec[EQUIP_KEYS[ci]] = val;
+      }
+      if (rec.id || rec.inventario) out.push(rec);
+    });
+    return out;
+  }
+
   // ---- Apoyos para la integración en la app ----
   function mesANumero(mes) {
     var i = MESES.indexOf(mes);
@@ -213,6 +234,7 @@
 
   return {
     transform: transform,
+    extractEquipos: extractEquipos,
     OUT_HEADERS: OUT_HEADERS,
     OUT_WIDTHS: OUT_WIDTHS,
     INT_OUT_COLS: INT_OUT_COLS,
