@@ -30,6 +30,12 @@ No requiere servidor, instalación ni conexión a internet: basta con abrir
   Configuración). Lista inicial tomada del documento de proceso (v2.0).
 - **Vínculo con el listado de equipos críticos** (965 equipos cargados como
   referencia): busque por inventario, equipo, serie, marca, servicio o ubicación.
+- **Inventario de equipos con estado automático.** Vista del inventario completo
+  donde el estado de cada equipo —**Operativo**, **No operativo**, **En servicio
+  técnico** o **Desconocido** (sin eventos)— se calcula a partir del **último
+  evento** registrado, junto con la **fecha de la última actualización**. Al
+  hacer clic en un equipo se abre su ficha con **todos sus registros**. Filtra
+  por estado y se puede exportar a `.xlsx`.
 - **Exportación a `.xlsx` ordenada y tabulada**, sin librerías externas:
   - Hoja **«Bitácora general»** con todos los registros ordenados por folio,
     fecha y etapa.

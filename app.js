@@ -172,7 +172,7 @@
   ETAPAS.forEach(function (e, i) { e._orden = i; ETAPAS_BY_ID[e.id] = e; });
 
   var GRUPOS_NAV = [
-    { label: 'Inicio', items: ['__dashboard'] },
+    { label: 'Inicio', items: ['__dashboard', '__inventario'] },
     { label: 'Solicitud', items: ['solicitud'] },
     { label: 'Vía A · Servicio técnico', items: ['envio', 'estado_st', 'recepcion'] },
     { label: 'Vía B · En sitio', items: ['diagnostico'] },
@@ -437,9 +437,9 @@
   // =========================================================== Render general
   var contentEl, viewTitleEl, viewSubEl;
 
-  function navegar(view) {
+  function navegar(view, editId) {
     STATE.view = view;
-    STATE.editId = null;
+    STATE.editId = editId || null;
     render();
     document.getElementById('sidebar').classList.remove('open');
     document.getElementById('backdrop').classList.remove('show');
@@ -450,6 +450,7 @@
     refrescarDatalists();
     renderSidebar();
     if (STATE.view === '__dashboard') renderDashboard();
+    else if (STATE.view === '__inventario') renderInventario();
     else if (STATE.view === '__todos') renderTodos();
     else if (STATE.view === '__config') renderConfig();
     else renderEtapa(STATE.view);
@@ -463,6 +464,7 @@
       g.items.forEach(function (id) {
         var label, icono, badge = null;
         if (id === '__dashboard') { label = 'Resumen'; icono = '📊'; }
+        else if (id === '__inventario') { label = 'Inventario de equipos'; icono = '🩺'; badge = Object.keys(buildEquipoIndex()).length; }
         else if (id === '__todos') { label = 'Todos los registros'; icono = '🗂️'; badge = totalRegistros(); }
         else if (id === '__config') { label = 'Configuración'; icono = '⚙️'; }
         else { var et = ETAPAS_BY_ID[id]; label = et.nombre; icono = et.icono; badge = DB.registros[id].length; }
@@ -570,6 +572,250 @@
   }
   function th(t) { return el('th', {}, t); }
   function td(c) { return el('td', {}, [typeof c === 'object' && c ? c : document.createTextNode(c == null ? '' : String(c))]); }
+
+  // ------------------------------------------------------- Inventario / estado
+  // Índice: N° de inventario -> lista de eventos {etapa, registro}
+  function buildEquipoIndex() {
+    var idx = {};
+    ETAPAS.forEach(function (et) {
+      DB.registros[et.id].forEach(function (r) {
+        if (r.equipo && r.equipo.inv) { (idx[r.equipo.inv] = idx[r.equipo.inv] || []).push({ etapa: et, r: r }); }
+      });
+    });
+    return idx;
+  }
+
+  function normEstado(v) {
+    if (!v) return null;
+    if (/no operativo/i.test(v)) return 'No operativo';
+    if (/servicio/i.test(v)) return 'Servicio técnico';
+    if (/operativo/i.test(v)) return 'Operativo';
+    return null;
+  }
+
+  // Estado físico que implica un registro según su etapa (null = no lo define).
+  function estadoDesdeRegistro(stageId, r) {
+    switch (stageId) {
+      case 'cierre': return normEstado(r.estado_final) || 'Operativo';
+      case 'reparacion': return normEstado(r.resultado) || 'No operativo';
+      case 'recepcion': return normEstado(r.estado_equipo) || 'No operativo';
+      case 'diagnostico': return normEstado(r.estado_equipo) || 'No operativo';
+      case 'estado_st': return 'Servicio técnico';
+      case 'envio': return 'Servicio técnico';
+      case 'solicitud': return 'No operativo';
+      default: return null; // etapas comerciales no definen estado físico
+    }
+  }
+
+  function cmpFechaDesc(a, b) {
+    var fa = a.fecha || '', fb = b.fecha || '';
+    if (fa !== fb) return fa < fb ? 1 : -1;
+    var ca = a._createdAt || '', cb = b._createdAt || '';
+    return ca < cb ? 1 : (ca > cb ? -1 : 0);
+  }
+
+  // Estado actual + fecha de última actualización a partir de los eventos.
+  function estadoYActualizacion(evs) {
+    if (!evs.length) return { estado: 'Desconocido', ultima: '' };
+    var sorted = evs.slice().sort(function (a, b) { return cmpFechaDesc(a.r, b.r); });
+    var top = sorted[0].r;
+    var ultima = top.fecha || (top._createdAt ? top._createdAt.slice(0, 10) : '');
+    var estado = 'No operativo';
+    for (var i = 0; i < sorted.length; i++) {
+      var s = estadoDesdeRegistro(sorted[i].etapa.id, sorted[i].r);
+      if (s) { estado = s; break; }
+    }
+    return { estado: estado, ultima: ultima };
+  }
+
+  function calcInventario() {
+    var idx = buildEquipoIndex();
+    return EQUIPOS.map(function (e) {
+      var evs = (e.inventario && idx[e.inventario]) ? idx[e.inventario] : [];
+      var info = estadoYActualizacion(evs);
+      return { e: e, estado: info.estado, ultima: info.ultima, n: evs.length, evs: evs };
+    });
+  }
+
+  function estadoPill(estado) {
+    var cls = estado === 'Operativo' ? 'pill pill-ok'
+      : estado === 'No operativo' ? 'pill pill-no'
+        : estado === 'Servicio técnico' ? 'pill pill-st' : 'pill pill-gray';
+    return el('span', { class: cls }, estado);
+  }
+
+  function renderInventario() {
+    setTitulo('🩺 Inventario de equipos', EQUIPOS.length + ' equipos críticos · estado según el último evento');
+    contentEl.innerHTML = '';
+
+    var inv = calcInventario();
+    var counts = { 'Operativo': 0, 'No operativo': 0, 'Servicio técnico': 0, 'Desconocido': 0 };
+    inv.forEach(function (x) { counts[x.estado] = (counts[x.estado] || 0) + 1; });
+
+    var stats = el('div', { class: 'stat-grid' });
+    function st(n, l, accent) { return el('div', { class: 'stat' + (accent ? ' accent' : '') }, [el('div', { class: 'n' }, String(n)), el('div', { class: 'l' }, l)]); }
+    stats.appendChild(st(counts['Operativo'], 'Operativos', true));
+    stats.appendChild(st(counts['No operativo'], 'No operativos'));
+    stats.appendChild(st(counts['Servicio técnico'], 'En servicio técnico'));
+    stats.appendChild(st(counts['Desconocido'], 'Desconocido (sin eventos)'));
+    contentEl.appendChild(stats);
+
+    contentEl.appendChild(el('div', { class: 'banner' },
+      'El estado se calcula automáticamente a partir del último evento registrado de cada equipo. ' +
+      'Haga clic en una fila para ver la ficha del equipo y todos sus registros.'));
+
+    var card = el('div', { class: 'card' });
+    var body = el('div', { class: 'card-body' });
+
+    var toolbar = el('div', { class: 'toolbar' });
+    var search = el('input', { type: 'search', placeholder: 'Buscar por inventario, equipo, serie, marca, servicio, ubicación…' });
+    var selEstado = el('select');
+    [['', 'Todos los estados'], ['Operativo', 'Operativo'], ['No operativo', 'No operativo'], ['Servicio técnico', 'En servicio técnico'], ['Desconocido', 'Desconocido']]
+      .forEach(function (o) { selEstado.appendChild(el('option', { value: o[0] }, o[1])); });
+    toolbar.appendChild(search);
+    toolbar.appendChild(selEstado);
+    toolbar.appendChild(el('div', { class: 'spacer' }));
+    var note = el('span', { class: 'count-note' });
+    toolbar.appendChild(note);
+    var btnExp = el('button', { class: 'btn' }, '⬇️ Exportar inventario');
+    btnExp.onclick = function () { exportarInventario(); };
+    toolbar.appendChild(btnExp);
+    body.appendChild(toolbar);
+
+    var cont = el('div');
+    body.appendChild(cont);
+
+    function pintar() {
+      var q = search.value.trim().toLowerCase();
+      var ef = selEstado.value;
+      var rows = inv.filter(function (x) {
+        if (ef && x.estado !== ef) return false;
+        if (!q) return true;
+        var e = x.e;
+        var hay = ((e.inventario || '') + ' ' + (e.equipo || '') + ' ' + (e.serie || '') + ' ' + (e.marca || '') + ' ' +
+          (e.modelo || '') + ' ' + (e.servicio || '') + ' ' + (e.unidad || '') + ' ' + (e.ubicacion || '')).toLowerCase();
+        return hay.indexOf(q) >= 0;
+      });
+      rows.sort(function (a, b) { return cmpNat(a.e.inventario, b.e.inventario); });
+      note.textContent = rows.length + ' equipo(s)';
+      cont.innerHTML = '';
+      if (!rows.length) { cont.appendChild(el('div', { class: 'empty-state' }, [el('div', { class: 'big' }, '🔎'), el('div', {}, 'Sin resultados.')])); return; }
+
+      var wrap = el('div', { class: 'tabla-wrap' });
+      var t = el('table', { class: 'data' });
+      t.appendChild(el('thead', {}, el('tr', {}, [
+        th('N° Inventario'), th('Equipo'), th('Servicio'), th('Ubicación'), th('Marca / Modelo'),
+        th('Serie'), th('Estado'), th('Última actualización'), th('Registros')
+      ])));
+      var tb = el('tbody');
+      var frag = document.createDocumentFragment();
+      rows.forEach(function (x) {
+        var e = x.e;
+        var tr = el('tr', { class: 'row-click' });
+        tr.appendChild(td(e.inventario || '—'));
+        tr.appendChild(td(e.equipo || '—'));
+        tr.appendChild(td(e.servicio || '—'));
+        tr.appendChild(td(e.ubicacion || '—'));
+        tr.appendChild(td([e.marca, e.modelo].filter(Boolean).join(' ') || '—'));
+        tr.appendChild(td(e.serie || '—'));
+        tr.appendChild(td(estadoPill(x.estado)));
+        tr.appendChild(td(x.ultima ? fmtFecha(x.ultima) : '—'));
+        tr.appendChild(td(String(x.n)));
+        tr.onclick = function () { openEquipoDetalle(x); };
+        frag.appendChild(tr);
+      });
+      tb.appendChild(frag);
+      t.appendChild(tb);
+      wrap.appendChild(t);
+      cont.appendChild(wrap);
+    }
+    search.addEventListener('input', pintar);
+    selEstado.addEventListener('change', pintar);
+    pintar();
+
+    card.appendChild(body);
+    contentEl.appendChild(card);
+  }
+
+  function openEquipoDetalle(item) {
+    var e = item.e;
+    var cont = el('div');
+
+    cont.appendChild(el('div', { style: 'margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap' }, [
+      estadoPill(item.estado),
+      el('span', { class: 'count-note' }, item.ultima ? ('Última actualización: ' + fmtFecha(item.ultima)) : 'Sin actualizaciones'),
+      el('span', { class: 'count-note' }, '· ' + item.n + ' registro(s)')
+    ]));
+
+    var fg = el('div', { class: 'ficha-grid' });
+    [['N° Inventario', e.inventario], ['N° Carpeta', e.carpeta], ['Equipo', e.equipo], ['Servicio', e.servicio],
+    ['Unidad', e.unidad], ['Ubicación', e.ubicacion], ['Procedencia', e.procedencia], ['Marca', e.marca],
+    ['Modelo', e.modelo], ['Serie', e.serie], ['Año instalación', e.anio], ['Vida útil residual', e.vida_util],
+    ['Clasificación', e.clasificacion]].forEach(function (p) {
+      if (p[1]) fg.appendChild(el('div', { class: 'it' }, [el('div', { class: 'k' }, p[0]), el('div', { class: 'v' }, p[1])]));
+    });
+    cont.appendChild(fg);
+
+    cont.appendChild(el('h4', { style: 'margin:6px 0 10px;font-size:14px' }, 'Registros del equipo'));
+
+    if (!item.evs.length) {
+      cont.appendChild(el('div', { class: 'empty-state' }, [el('div', { class: 'big' }, '🗒️'),
+        el('div', {}, 'Este equipo no tiene registros aún. Puede crear uno desde cualquier etapa seleccionándolo.')]));
+    } else {
+      var evs = item.evs.slice().sort(function (a, b) { return cmpFechaDesc(a.r, b.r); });
+      var wrap = el('div', { class: 'tabla-wrap' });
+      var t = el('table', { class: 'data' });
+      t.appendChild(el('thead', {}, el('tr', {}, [
+        th('Fecha'), th('Etapa'), th('Estado / Resultado'), th('Técnico'), th('Empresa'), th('N° doc'), th('Folio'), th('Observaciones'), th('')
+      ])));
+      var tb = el('tbody');
+      evs.forEach(function (x) {
+        var r = x.r;
+        var tr = el('tr');
+        tr.appendChild(td(fmtFecha(r.fecha) || '—'));
+        tr.appendChild(td(el('span', { class: 'tag-etapa' }, x.etapa.nombre)));
+        var er = estadoResultado(r);
+        tr.appendChild(td(er ? pillFor(estadoResultadoKey(r), er) : '—'));
+        tr.appendChild(td(r.tecnico || '—'));
+        tr.appendChild(td(r.empresa || '—'));
+        tr.appendChild(td(numeroDoc(r) || '—'));
+        tr.appendChild(td(r.folio || '—'));
+        var obs = r.observaciones || '';
+        tr.appendChild(td(obs.length > 50 ? (obs.slice(0, 50) + '…') : (obs || '—')));
+        var acc = el('td', { class: 'acciones' });
+        var b = el('button', { class: 'btn btn-sm', title: 'Editar este registro' }, '✏️');
+        b.onclick = function () { closeModal(); navegar(x.etapa.id, r._id); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+        acc.appendChild(b);
+        tr.appendChild(acc);
+        tb.appendChild(tr);
+      });
+      t.appendChild(tb);
+      wrap.appendChild(t);
+      cont.appendChild(wrap);
+    }
+    openModal('🩺 ' + (e.inventario || '(sin inventario)') + ' — ' + (e.equipo || ''), cont);
+  }
+
+  // ------------------------------------------------------------------- Modal
+  function openModal(titulo, bodyNode) {
+    closeModal();
+    var bd = el('div', { class: 'modal-backdrop', id: 'modal-bd' });
+    var m = el('div', { class: 'modal' });
+    var btnX = el('button', { class: 'close', title: 'Cerrar' }, '✕');
+    btnX.onclick = closeModal;
+    m.appendChild(el('div', { class: 'modal-head' }, [el('h3', {}, titulo), btnX]));
+    m.appendChild(el('div', { class: 'modal-body' }, [bodyNode]));
+    bd.appendChild(m);
+    bd.addEventListener('click', function (ev) { if (ev.target === bd) closeModal(); });
+    document.body.appendChild(bd);
+    document.addEventListener('keydown', escClose);
+  }
+  function escClose(ev) { if (ev.key === 'Escape') closeModal(); }
+  function closeModal() {
+    var x = document.getElementById('modal-bd');
+    if (x && x.parentNode) x.parentNode.removeChild(x);
+    document.removeEventListener('keydown', escClose);
+  }
 
   // --------------------------------------------------------------- Etapa view
   function renderEtapa(id) {
@@ -779,7 +1025,7 @@
         tr.appendChild(td(numeroDoc(r) || '—'));
         var acc = el('td', { class: 'acciones' });
         var bEd = el('button', { class: 'btn btn-sm' }, '✏️');
-        bEd.onclick = function () { STATE.editId = r._id; navegar(x.et.id); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+        bEd.onclick = function () { navegar(x.et.id, r._id); window.scrollTo({ top: 0, behavior: 'smooth' }); };
         acc.appendChild(bEd);
         tr.appendChild(acc);
         tb.appendChild(tr);
@@ -1009,9 +1255,43 @@
     };
   }
 
+  function hojaInventario() {
+    var inv = calcInventario();
+    inv.sort(function (a, b) { return cmpNat(a.e.inventario, b.e.inventario); });
+    var cols = [
+      { titulo: 'N° Inventario', ancho: 14, get: function (x) { return x.e.inventario || ''; } },
+      { titulo: 'N° Carpeta', ancho: 12, get: function (x) { return x.e.carpeta || ''; } },
+      { titulo: 'Equipo', ancho: 20, get: function (x) { return x.e.equipo || ''; } },
+      { titulo: 'Servicio', ancho: 22, get: function (x) { return x.e.servicio || ''; } },
+      { titulo: 'Unidad', ancho: 18, get: function (x) { return x.e.unidad || ''; } },
+      { titulo: 'Ubicación', ancho: 18, get: function (x) { return x.e.ubicacion || ''; } },
+      { titulo: 'Procedencia', ancho: 14, get: function (x) { return x.e.procedencia || ''; } },
+      { titulo: 'Marca', ancho: 16, get: function (x) { return x.e.marca || ''; } },
+      { titulo: 'Modelo', ancho: 20, get: function (x) { return x.e.modelo || ''; } },
+      { titulo: 'Serie', ancho: 16, get: function (x) { return x.e.serie || ''; } },
+      { titulo: 'Año instalación', ancho: 14, get: function (x) { return x.e.anio || ''; } },
+      { titulo: 'Clasificación', ancho: 16, get: function (x) { return x.e.clasificacion || ''; } },
+      { titulo: 'Estado actual', ancho: 16, get: function (x) { return x.estado; } },
+      { titulo: 'Última actualización', ancho: 18, get: function (x) { return fmtFecha(x.ultima); } },
+      { titulo: 'N° registros', ancho: 12, get: function (x) { return x.n; } }
+    ];
+    return {
+      nombre: 'Inventario',
+      columnas: cols.map(function (c) { return { titulo: c.titulo, ancho: c.ancho }; }),
+      filas: inv.map(function (x) { return cols.map(function (c) { return c.get(x); }); })
+    };
+  }
+
+  function exportarInventario() {
+    try {
+      XLSXWriter.descargar('Inventario_Equipos_' + hoyISO() + '.xlsx', [hojaInventario()]);
+      toast('Inventario exportado a Excel.', 'ok');
+    } catch (e) { toast('Error al exportar: ' + e.message, 'err'); }
+  }
+
   function exportarTodo() {
     if (totalRegistros() === 0) { toast('No hay registros para exportar.', 'err'); return; }
-    var hojas = [hojaBitacora()];
+    var hojas = [hojaBitacora(), hojaInventario()];
     ETAPAS.forEach(function (et) { if (DB.registros[et.id].length) hojas.push(hojaEtapa(et)); });
     try {
       XLSXWriter.descargar('Registros_Gestion_Equipos_' + hoyISO() + '.xlsx', hojas);
